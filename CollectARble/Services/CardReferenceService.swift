@@ -4,17 +4,25 @@ import UIKit
 struct CardReferenceService {
     static func generateReferenceImages() -> Set<ARReferenceImage> {
         var images = Set<ARReferenceImage>()
-        let cardPhysicalWidth: CGFloat = 0.063
-        
+        // Standard trading card width: 63mm = 0.063m
+        // If printing on A4/letter paper, the card might be larger — use 0.065 as default
+        let cardPhysicalWidth: CGFloat = 0.065
+
         for creature in Creature.allCreatures {
             guard let cardImage = renderCardImage(for: creature) else { continue }
             guard let cgImage = cardImage.cgImage else { continue }
-            
+
             let referenceImage = ARReferenceImage(cgImage, orientation: .up, physicalWidth: cardPhysicalWidth)
             referenceImage.name = creature.id
+            // Validate to improve tracking quality
+            referenceImage.validate { error in
+                if let error {
+                    print("Card reference validation warning for \(creature.id): \(error.localizedDescription)")
+                }
+            }
             images.insert(referenceImage)
         }
-        
+
         return images
     }
     

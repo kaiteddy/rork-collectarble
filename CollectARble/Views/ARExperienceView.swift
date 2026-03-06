@@ -28,13 +28,91 @@ struct ARExperienceView: View {
             ARViewContainer(viewModel: viewModel)
                 .ignoresSafeArea()
 
+            // Attack screen flash
+            if viewModel.showAttackFlash {
+                (viewModel.currentCreature?.element.displayColor ?? .white)
+                    .opacity(0.4)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
             topBar
+
+            // Damage number floating up
+            if viewModel.showDamageNumber {
+                Text("-\(viewModel.lastDamage)")
+                    .font(.system(size: 48, weight: .black, design: .rounded))
+                    .foregroundStyle(.red)
+                    .shadow(color: .black, radius: 4, x: 0, y: 2)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.5).combined(with: .opacity),
+                        removal: .move(edge: .top).combined(with: .opacity)
+                    ))
+                    .allowsHitTesting(false)
+            }
 
             VStack {
                 Spacer()
+
+                // HP Bar (shown when creature is spawned)
+                if viewModel.isCreatureSpawned {
+                    hpBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 bottomControls
             }
         }
+        .animation(.easeOut(duration: 0.15), value: viewModel.showAttackFlash)
+        .animation(.spring(response: 0.4, dampingFraction: 0.6), value: viewModel.showDamageNumber)
+    }
+
+    private var hpBar: some View {
+        VStack(spacing: 4) {
+            if let creature = viewModel.currentCreature {
+                HStack {
+                    Image(systemName: creature.element.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(creature.element.displayColor)
+                    Text(creature.name)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text("HP \(viewModel.creatureHP)/\(viewModel.creatureMaxHP)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(Color.white.opacity(0.15))
+                        .frame(height: 8)
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(hpColor)
+                                .frame(
+                                    width: geo.size.width * CGFloat(viewModel.creatureHP) / CGFloat(max(viewModel.creatureMaxHP, 1)),
+                                    height: 8
+                                )
+                                .animation(.easeOut(duration: 0.4), value: viewModel.creatureHP)
+                        }
+                }
+                .frame(height: 8)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 12))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+    }
+
+    private var hpColor: Color {
+        let ratio = Double(viewModel.creatureHP) / Double(max(viewModel.creatureMaxHP, 1))
+        if ratio > 0.5 { return .green }
+        if ratio > 0.25 { return .yellow }
+        return .red
     }
 
     private var topBar: some View {
@@ -100,6 +178,21 @@ struct ARExperienceView: View {
             }
 
             if viewModel.isCreatureSpawned {
+                if !viewModel.isTrackingCard {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.yellow)
+                        Text("Point camera at card to track")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .transition(.opacity)
+                }
+
                 interactionHint
                     .transition(.opacity)
 
@@ -266,7 +359,7 @@ struct ARExperienceView: View {
             viewModel.triggerAttack()
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: viewModel.currentCreature?.element == .fire ? "flame.fill" : "bolt.fill")
+                Image(systemName: "bolt.fill")
                     .font(.title3)
                     .symbolEffect(.bounce, value: attackTrigger)
 
@@ -298,7 +391,7 @@ struct ARViewContainer: UIViewRepresentable {
 
         let coaching = ARCoachingOverlayView()
         coaching.session = arView.session
-        coaching.goal = .horizontalPlane
+        coaching.goal = .tracking
         coaching.activatesAutomatically = true
         coaching.translatesAutoresizingMaskIntoConstraints = false
         arView.addSubview(coaching)
@@ -339,7 +432,6 @@ struct ARViewContainer: UIViewRepresentable {
         let viewModel: ARViewModel
         var arView: ARView?
         private var lastPanLocation: CGPoint = .zero
-        private var pinchStartScale: Float = 1.0
 
         init(viewModel: ARViewModel) {
             self.viewModel = viewModel
@@ -350,6 +442,7 @@ struct ARViewContainer: UIViewRepresentable {
             let location = sender.location(in: arView)
 
             if viewModel.isCreatureSpawned {
+                viewModel.triggerAttack()
                 return
             }
 
@@ -390,9 +483,6 @@ struct ARViewContainer: UIViewRepresentable {
             guard viewModel.isCreatureSpawned else { return }
 
             switch sender.state {
-            case .began:
-                sender.scale = 1.0
-                viewModel.handlePinchBegan()
             case .changed:
                 viewModel.handlePinchGesture(scale: Float(sender.scale))
             case .ended, .cancelled:
@@ -406,6 +496,26 @@ struct ARViewContainer: UIViewRepresentable {
         nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
             Task { @MainActor in
                 viewModel.processFrame(frame)
+            }
+        }
+
+        nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+            for anchor in anchors {
+                if let imageAnchor = anchor as? ARImageAnchor {
+                    Task { @MainActor in
+                        viewModel.handleImageAnchorAdded(imageAnchor)
+                    }
+                }
+            }
+        }
+
+        nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+            for anchor in anchors {
+                if let imageAnchor = anchor as? ARImageAnchor {
+                    Task { @MainActor in
+                        viewModel.handleImageAnchorUpdated(imageAnchor)
+                    }
+                }
             }
         }
     }

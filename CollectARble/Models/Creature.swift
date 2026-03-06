@@ -7,6 +7,7 @@ nonisolated struct Creature: Identifiable, Sendable {
     let attackName: String
     let description: String
     let bundledModelName: String?
+    let animationModelName: String?
 
     nonisolated enum Element: String, Sendable {
         case fire, ice, nature
@@ -47,7 +48,8 @@ nonisolated struct Creature: Identifiable, Sendable {
             element: .fire,
             attackName: "Flamethrower",
             description: "A fearsome fire-breathing dragon that soars through the skies.",
-            bundledModelName: "Charizard_SV"
+            bundledModelName: "Charizard_SV",
+            animationModelName: "Charizard_Flying_Animation"
         ),
         Creature(
             id: "glacius",
@@ -55,7 +57,8 @@ nonisolated struct Creature: Identifiable, Sendable {
             element: .ice,
             attackName: "Frost Nova",
             description: "An ancient ice guardian from the frozen peaks.",
-            bundledModelName: nil
+            bundledModelName: nil,
+            animationModelName: nil
         ),
         Creature(
             id: "verdant",
@@ -63,7 +66,8 @@ nonisolated struct Creature: Identifiable, Sendable {
             element: .nature,
             attackName: "Thorn Storm",
             description: "A nature spirit who commands the power of the forest.",
-            bundledModelName: nil
+            bundledModelName: nil,
+            animationModelName: nil
         ),
     ]
 
