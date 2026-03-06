@@ -3,20 +3,58 @@ import UIKit
 
 struct PokeballAnimationService {
     static func loadPokeball() async -> Entity? {
-        guard let url = Bundle.main.url(forResource: "Poke_Ball", withExtension: "usdz") else {
-            if let fallback = Bundle.main.url(forResource: "Pokeball", withExtension: "usdz") {
-                return try? await Entity(contentsOf: fallback)
+        let names = ["Poke_Ball", "Pokeball", "poke_ball", "pokeball"]
+        for name in names {
+            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
+                do {
+                    let entity = try await Entity(contentsOf: url)
+                    entity.scale = SIMD3<Float>(repeating: 0.0001)
+                    entity.position = SIMD3<Float>(0, 0.15, 0)
+                    return entity
+                } catch {
+                    continue
+                }
             }
-            return nil
         }
-        do {
-            let entity = try await Entity(contentsOf: url)
-            entity.scale = SIMD3<Float>(repeating: 0.0001)
-            entity.position = SIMD3<Float>(0, 0.25, 0)
-            return entity
-        } catch {
-            return nil
-        }
+        return createFallbackPokeball()
+    }
+
+    private static func createFallbackPokeball() -> Entity {
+        let root = Entity()
+        root.name = "FallbackPokeball"
+
+        let topHalf = ModelEntity(
+            mesh: .generateSphere(radius: 0.012),
+            materials: [SimpleMaterial(color: .red, roughness: 0.3, isMetallic: true)]
+        )
+        topHalf.position = SIMD3<Float>(0, 0.003, 0)
+
+        let bottomHalf = ModelEntity(
+            mesh: .generateSphere(radius: 0.012),
+            materials: [SimpleMaterial(color: .white, roughness: 0.3, isMetallic: true)]
+        )
+        bottomHalf.position = SIMD3<Float>(0, -0.003, 0)
+
+        let band = ModelEntity(
+            mesh: .generateCylinder(height: 0.002, radius: 0.013),
+            materials: [SimpleMaterial(color: .darkGray, roughness: 0.5, isMetallic: false)]
+        )
+
+        let button = ModelEntity(
+            mesh: .generateSphere(radius: 0.004),
+            materials: [SimpleMaterial(color: .white, roughness: 0.1, isMetallic: true)]
+        )
+        button.position = SIMD3<Float>(0, 0, 0.012)
+
+        root.addChild(topHalf)
+        root.addChild(bottomHalf)
+        root.addChild(band)
+        root.addChild(button)
+
+        root.scale = SIMD3<Float>(repeating: 0.0001)
+        root.position = SIMD3<Float>(0, 0.15, 0)
+
+        return root
     }
 
     static func runSpawnSequence(
@@ -27,7 +65,7 @@ struct PokeballAnimationService {
         onCreatureReady: @escaping (Entity) -> Void
     ) async {
         var landTransform = pokeball.transform
-        landTransform.scale = SIMD3<Float>(repeating: 0.008)
+        landTransform.scale = SIMD3<Float>(repeating: 0.006)
         landTransform.translation = SIMD3<Float>(0, 0.01, 0)
         pokeball.move(to: landTransform, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
 
@@ -35,7 +73,7 @@ struct PokeballAnimationService {
         onPokeballLanded()
 
         for i in 0..<3 {
-            let angle: Float = (i % 2 == 0) ? 0.2 : -0.2
+            let angle: Float = (i % 2 == 0) ? 0.15 : -0.15
             var shakeTransform = pokeball.transform
             shakeTransform.rotation = simd_quatf(angle: angle, axis: SIMD3<Float>(0, 0, 1))
             pokeball.move(to: shakeTransform, relativeTo: anchor, duration: 0.12, timingFunction: .easeInOut)
@@ -53,13 +91,13 @@ struct PokeballAnimationService {
         }
 
         var openBurstTransform = pokeball.transform
-        openBurstTransform.scale = SIMD3<Float>(repeating: 0.012)
+        openBurstTransform.scale = SIMD3<Float>(repeating: 0.009)
         pokeball.move(to: openBurstTransform, relativeTo: anchor, duration: 0.2, timingFunction: .easeOut)
         try? await Task.sleep(for: .seconds(0.3))
 
         var splitTopTransform = pokeball.transform
-        splitTopTransform.translation.y += 0.03
-        splitTopTransform.scale = SIMD3<Float>(repeating: 0.006)
+        splitTopTransform.translation.y += 0.02
+        splitTopTransform.scale = SIMD3<Float>(repeating: 0.004)
         pokeball.move(to: splitTopTransform, relativeTo: anchor, duration: 0.4, timingFunction: .easeOut)
 
         try? await Task.sleep(for: .seconds(0.2))
@@ -97,7 +135,7 @@ struct PokeballAnimationService {
 
             var pokeballFade = pokeball.transform
             pokeballFade.scale = SIMD3<Float>(repeating: 0.0001)
-            pokeballFade.translation.y = 0.06
+            pokeballFade.translation.y = 0.04
             pokeball.move(to: pokeballFade, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
 
             try? await Task.sleep(for: .seconds(1.5))
@@ -117,7 +155,7 @@ struct PokeballAnimationService {
 
             var pokeballFade = pokeball.transform
             pokeballFade.scale = SIMD3<Float>(repeating: 0.0001)
-            pokeballFade.translation.y = 0.06
+            pokeballFade.translation.y = 0.04
             pokeball.move(to: pokeballFade, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
 
             try? await Task.sleep(for: .seconds(1.5))
@@ -129,15 +167,22 @@ struct PokeballAnimationService {
     }
 
     private static func loadCreatureModel(for creature: Creature) async -> Entity {
-        guard let modelName = creature.bundledModelName,
-              let url = Bundle.main.url(forResource: modelName, withExtension: "usdz") else {
+        guard let modelName = creature.bundledModelName else {
             return CreatureBuilder.buildCreature(for: creature)
         }
-        do {
-            return try await Entity(contentsOf: url)
-        } catch {
-            return CreatureBuilder.buildCreature(for: creature)
+
+        let names = [modelName, modelName.replacingOccurrences(of: "_", with: "")]
+        for name in names {
+            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
+                do {
+                    return try await Entity(contentsOf: url)
+                } catch {
+                    continue
+                }
+            }
         }
+
+        return CreatureBuilder.buildCreature(for: creature)
     }
 
     private static func createOpenFlash(at position: SIMD3<Float>) -> [Entity] {
@@ -154,8 +199,8 @@ struct PokeballAnimationService {
             )
             particle.position = position + SIMD3<Float>(0, 0.005, 0)
 
-            let spread: Float = 0.04
-            let height = Float.random(in: 0.01...0.04)
+            let spread: Float = 0.03
+            let height = Float.random(in: 0.01...0.03)
             var target = particle.transform
             target.translation = position + SIMD3<Float>(cos(angle) * spread, height, sin(angle) * spread)
             target.scale = SIMD3<Float>(repeating: 0.3)
@@ -165,14 +210,14 @@ struct PokeballAnimationService {
         }
 
         let glowBall = ModelEntity(
-            mesh: .generateSphere(radius: 0.008),
+            mesh: .generateSphere(radius: 0.006),
             materials: [white]
         )
         glowBall.position = position + SIMD3<Float>(0, 0.01, 0)
 
         var glowTarget = glowBall.transform
-        glowTarget.scale = SIMD3<Float>(repeating: 2.5)
-        glowTarget.translation = position + SIMD3<Float>(0, 0.02, 0)
+        glowTarget.scale = SIMD3<Float>(repeating: 2.0)
+        glowTarget.translation = position + SIMD3<Float>(0, 0.015, 0)
         glowBall.move(to: glowTarget, relativeTo: nil, duration: 0.4, timingFunction: .easeOut)
         particles.append(glowBall)
 
@@ -198,8 +243,8 @@ struct PokeballAnimationService {
             )
             particle.position = position
 
-            let spread = Float.random(in: 0.03...0.06)
-            let height = Float.random(in: 0.01...0.05)
+            let spread = Float.random(in: 0.02...0.04)
+            let height = Float.random(in: 0.01...0.04)
             var target = particle.transform
             target.translation = position + SIMD3<Float>(cos(angle) * spread, height, sin(angle) * spread)
             target.scale = SIMD3<Float>(repeating: 0.2)

@@ -25,6 +25,8 @@ class ARViewModel {
     private let cardHoldDuration: TimeInterval = 1.0
     private var creatureAnchor: AnchorEntity?
     private var currentCreatureScale: Float = 0.0004
+    private var lastCardWorldPosition: SIMD3<Float>?
+    private var isTrackingCard: Bool = false
 
     var availableCreatures: [Creature] {
         Creature.allCreatures
@@ -50,12 +52,17 @@ class ARViewModel {
     }
 
     func processFrame(_ frame: ARFrame) {
-        guard let arView,
-              !isCreatureSpawned,
-              !isPokeballAnimating else { return }
+        guard let arView else { return }
 
         let viewportSize = arView.bounds.size
         guard viewportSize.width > 0, viewportSize.height > 0 else { return }
+
+        if isCreatureSpawned, isTrackingCard {
+            updateCreaturePositionFromCard(frame: frame, viewportSize: viewportSize)
+            return
+        }
+
+        guard !isCreatureSpawned, !isPokeballAnimating else { return }
 
         if let detected = cardDetectionService.detectCard(in: frame, viewportSize: viewportSize) {
             if cardHoldStartTime == nil {
@@ -80,6 +87,26 @@ class ARViewModel {
                 cardDetectionProgress = 0
                 isCardDetected = false
                 statusMessage = "Point your camera at any trading card"
+            }
+        }
+    }
+
+    private func updateCreaturePositionFromCard(frame: ARFrame, viewportSize: CGSize) {
+        guard let anchor = creatureAnchor else { return }
+
+        if let detected = cardDetectionService.detectCardPassive(in: frame, viewportSize: viewportSize) {
+            guard let arView else { return }
+            let results = arView.raycast(from: detected.screenCenter, allowing: .estimatedPlane, alignment: .horizontal)
+            if let result = results.first {
+                let newPos = SIMD3<Float>(
+                    result.worldTransform.columns.3.x,
+                    result.worldTransform.columns.3.y,
+                    result.worldTransform.columns.3.z
+                )
+                let currentPos = anchor.position(relativeTo: nil)
+                let smoothed = currentPos + (newPos - currentPos) * 0.15
+                anchor.setPosition(smoothed, relativeTo: nil)
+                lastCardWorldPosition = smoothed
             }
         }
     }
@@ -124,6 +151,11 @@ class ARViewModel {
         let anchor = AnchorEntity(world: worldTransform)
         arView.scene.addAnchor(anchor)
         creatureAnchor = anchor
+        lastCardWorldPosition = SIMD3<Float>(
+            worldTransform.columns.3.x,
+            worldTransform.columns.3.y,
+            worldTransform.columns.3.z
+        )
 
         statusMessage = "Summoning \(creature.name)!"
 
@@ -144,6 +176,7 @@ class ARViewModel {
                         self.creatureEntity = entity
                         self.isCreatureSpawned = true
                         self.isPokeballAnimating = false
+                        self.isTrackingCard = true
                         self.statusMessage = "\(creature.name) appeared! Interact with it!"
                         self.startIdleLoop()
                     }
@@ -175,6 +208,7 @@ class ARViewModel {
             creatureEntity = entity
             isCreatureSpawned = true
             isPokeballAnimating = false
+            isTrackingCard = true
             statusMessage = "\(creature.name) appeared! Interact with it!"
             startIdleLoop()
         } else {
@@ -184,6 +218,7 @@ class ARViewModel {
             creatureEntity = entity
             isCreatureSpawned = true
             isPokeballAnimating = false
+            isTrackingCard = true
             statusMessage = "\(creature.name) appeared!"
             CreatureBuilder.animateSpawn(entity: entity)
             startIdleLoop()
@@ -196,38 +231,45 @@ class ARViewModel {
     }
 
     func handlePanGesture(translation: CGPoint) {
-        guard let entity = creatureEntity else { return }
-        let rotationSpeed: Float = 0.01
+        guard let entity = creatureEntity, let anchor = creatureAnchor else { return }
+        let rotationSpeed: Float = 0.008
         let yaw = Float(translation.x) * rotationSpeed
         let currentRotation = entity.transform.rotation
         let deltaRotation = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
         entity.transform.rotation = deltaRotation * currentRotation
     }
 
+    func handlePinchBegan() {
+    }
+
     func handlePinchGesture(scale: Float) {
         guard let entity = creatureEntity else { return }
         let newScale = currentCreatureScale * scale
-        let clampedScale = min(max(newScale, 0.0001), 0.002)
+        let clampedScale = min(max(newScale, 0.0001), 0.003)
         entity.scale = SIMD3<Float>(repeating: clampedScale)
     }
 
     func handlePinchEnd(scale: Float) {
         let newScale = currentCreatureScale * scale
-        currentCreatureScale = min(max(newScale, 0.0001), 0.002)
+        currentCreatureScale = min(max(newScale, 0.0001), 0.003)
     }
 
     func triggerAttack() {
         guard let creature = currentCreature,
               let entity = creatureEntity,
+              let anchor = creatureAnchor,
               !isAttacking else { return }
 
         isAttacking = true
         statusMessage = "\(creature.attackName)!"
 
-        let position = entity.position(relativeTo: nil)
-        let particles = ParticleEffectBuilder.createAttackParticles(for: creature, at: position)
+        let localPos = entity.position(relativeTo: anchor)
 
-        if let anchor = entity.parent {
+        let particles: [Entity]
+        if creature.element == .fire {
+            particles = ParticleEffectBuilder.createFlamethrowerEffect(at: localPos, parentAnchor: anchor)
+        } else {
+            particles = ParticleEffectBuilder.createAttackParticles(for: creature, at: localPos)
             for particle in particles {
                 anchor.addChild(particle)
             }
@@ -236,8 +278,11 @@ class ARViewModel {
         particleEntities = particles
 
         Task {
-            try? await Task.sleep(for: .seconds(1.2))
-            ParticleEffectBuilder.removeParticles(particles, from: entity)
+            try? await Task.sleep(for: .seconds(1.5))
+            for particle in particles {
+                particle.removeFromParent()
+            }
+            particleEntities = []
             isAttacking = false
             statusMessage = "\(creature.name) is ready"
         }
@@ -260,12 +305,14 @@ class ARViewModel {
         isCreatureSpawned = false
         isAttacking = false
         isPokeballAnimating = false
+        isTrackingCard = false
         particleEntities = []
         detectedCardName = nil
         isCardDetected = false
         cardDetectionProgress = 0
         cardHoldStartTime = nil
         currentCreatureScale = 0.0004
+        lastCardWorldPosition = nil
         cardDetectionService.reset()
 
         statusMessage = "Point your camera at any trading card"

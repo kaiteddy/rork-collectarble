@@ -9,6 +9,9 @@ class CardDetectionService {
     private var consecutiveDetections: Int = 0
     private let requiredConsecutive: Int = 2
 
+    private var lastPassiveDetectionTime: TimeInterval = 0
+    private let passiveInterval: TimeInterval = 0.15
+
     struct DetectedCard {
         let boundingBox: CGRect
         let screenCenter: CGPoint
@@ -22,8 +25,31 @@ class CardDetectionService {
         isProcessing = true
         lastDetectionTime = now
 
-        let pixelBuffer = frame.capturedImage
+        let result = performDetection(pixelBuffer: frame.capturedImage, viewportSize: viewportSize)
 
+        isProcessing = false
+
+        if result != nil {
+            consecutiveDetections += 1
+        } else {
+            consecutiveDetections = 0
+        }
+
+        guard consecutiveDetections >= requiredConsecutive else {
+            return nil
+        }
+
+        return result
+    }
+
+    func detectCardPassive(in frame: ARFrame, viewportSize: CGSize) -> DetectedCard? {
+        let now = frame.timestamp
+        guard now - lastPassiveDetectionTime >= passiveInterval else { return nil }
+        lastPassiveDetectionTime = now
+        return performDetection(pixelBuffer: frame.capturedImage, viewportSize: viewportSize)
+    }
+
+    private func performDetection(pixelBuffer: CVPixelBuffer, viewportSize: CGSize) -> DetectedCard? {
         let request = VNDetectRectanglesRequest()
         request.minimumAspectRatio = 0.4
         request.maximumAspectRatio = 0.95
@@ -36,33 +62,17 @@ class CardDetectionService {
         do {
             try handler.perform([request])
         } catch {
-            isProcessing = false
-            consecutiveDetections = 0
             return nil
         }
 
-        isProcessing = false
-
         guard let results = request.results, !results.isEmpty else {
-            consecutiveDetections = 0
             return nil
         }
 
         let best = results.max(by: { $0.confidence < $1.confidence })!
-
         let box = best.boundingBox
-
         let area = box.width * box.height
-        guard area > 0.01 else {
-            consecutiveDetections = 0
-            return nil
-        }
-
-        consecutiveDetections += 1
-
-        guard consecutiveDetections >= requiredConsecutive else {
-            return nil
-        }
+        guard area > 0.01 else { return nil }
 
         let centerX = box.midX * viewportSize.width
         let centerY = (1 - box.midY) * viewportSize.height
@@ -76,6 +86,7 @@ class CardDetectionService {
 
     func reset() {
         lastDetectionTime = 0
+        lastPassiveDetectionTime = 0
         isProcessing = false
         consecutiveDetections = 0
     }

@@ -266,7 +266,7 @@ struct ARExperienceView: View {
             viewModel.triggerAttack()
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "bolt.fill")
+                Image(systemName: viewModel.currentCreature?.element == .fire ? "flame.fill" : "bolt.fill")
                     .font(.title3)
                     .symbolEffect(.bounce, value: attackTrigger)
 
@@ -339,6 +339,7 @@ struct ARViewContainer: UIViewRepresentable {
         let viewModel: ARViewModel
         var arView: ARView?
         private var lastPanLocation: CGPoint = .zero
+        private var pinchStartScale: Float = 1.0
 
         init(viewModel: ARViewModel) {
             self.viewModel = viewModel
@@ -349,7 +350,6 @@ struct ARViewContainer: UIViewRepresentable {
             let location = sender.location(in: arView)
 
             if viewModel.isCreatureSpawned {
-                viewModel.triggerAttack()
                 return
             }
 
@@ -390,6 +390,9 @@ struct ARViewContainer: UIViewRepresentable {
             guard viewModel.isCreatureSpawned else { return }
 
             switch sender.state {
+            case .began:
+                sender.scale = 1.0
+                viewModel.handlePinchBegan()
             case .changed:
                 viewModel.handlePinchGesture(scale: Float(sender.scale))
             case .ended, .cancelled:
