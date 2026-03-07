@@ -588,54 +588,10 @@ class ARViewModel {
 
     private func createDroppedCard(for creature: Creature) async -> Entity {
         print("DEBUG: Creating dropped card for \(creature.name)")
-
-        // For Charizard, use the 3D USDZ card model (same as My Collection)
-        if creature.id == "charizard" {
-            if let cardEntity = await load3DCardModel(for: creature) {
-                return cardEntity
-            }
-        }
-
-        // For other creatures (Messi), use 2D card with texture
         return await create2DCard(for: creature)
     }
 
-    /// Load 3D USDZ card model (for Charizard)
-    private func load3DCardModel(for creature: Creature) async -> Entity? {
-        // Try to load the USDZ card model
-        let possibleNames = [
-            "Pokemon_TCG_Charizard_1st_Edition",
-            "PokemonTCGCharizard1stEdition",
-            "pokemon_tcg_charizard_1st_edition"
-        ]
-
-        for name in possibleNames {
-            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
-                do {
-                    let cardEntity = try await Entity(contentsOf: url)
-                    cardEntity.name = "droppedCard"
-
-                    // Scale the card to real-world size (trading card ~63mm x 88mm)
-                    // The USDZ model may have different scale, adjust as needed
-                    cardEntity.scale = SIMD3<Float>(repeating: 0.001)
-
-                    // Rotate to lay flat (front facing up)
-                    cardEntity.orientation = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-
-                    print("DEBUG: Loaded 3D card model: \(name)")
-                    return cardEntity
-                } catch {
-                    print("DEBUG: Failed to load \(name): \(error)")
-                    continue
-                }
-            }
-        }
-
-        print("DEBUG: No 3D card model found for \(creature.id)")
-        return nil
-    }
-
-    /// Create 2D card with texture (for Messi and fallback)
+    /// Create 2D card with texture
     private func create2DCard(for creature: Creature) async -> Entity {
         // Standard trading card: 63mm x 88mm
         let cardWidth: Float = 0.063
@@ -647,10 +603,18 @@ class ARViewModel {
         // Create the front face as a plane
         let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
-        // Load the card image
+        // Load the card image - same images used in CardCollectionView
         var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
 
-        let cardImageName = creature.id == "messi" ? "messi_card_front" : ""
+        let cardImageName: String
+        switch creature.id {
+        case "messi":
+            cardImageName = "messi_card_front"
+        case "charizard":
+            cardImageName = "charizard_holographic"
+        default:
+            cardImageName = ""
+        }
 
         if let cardImage = loadCardImage(named: cardImageName), let cgImage = cardImage.cgImage {
             print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImage.size)")
