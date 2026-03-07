@@ -54,6 +54,12 @@ struct CardReferenceService {
                     UIColor(red: 0.1, green: 0.5, blue: 0.15, alpha: 1).cgColor,
                     UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1).cgColor
                 ]
+            case .sports:
+                bgColors = [
+                    UIColor(red: 0.05, green: 0.1, blue: 0.3, alpha: 1).cgColor,
+                    UIColor(red: 0.1, green: 0.25, blue: 0.5, alpha: 1).cgColor,
+                    UIColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1).cgColor
+                ]
             }
             
             let gradient = CGGradient(
@@ -96,6 +102,7 @@ struct CardReferenceService {
             case .fire: hp = "HP 120"
             case .ice: hp = "HP 100"
             case .nature: hp = "HP 90"
+            case .sports: hp = "⚽ 10"
             }
             hp.draw(at: CGPoint(x: size.width - 80, y: 28), withAttributes: hpAttrs)
             
@@ -235,8 +242,41 @@ struct CardReferenceService {
             ctx.setFillColor(UIColor(red: 0.05, green: 0.3, blue: 0.1, alpha: 1).cgColor)
             ctx.fillEllipse(in: CGRect(x: centerX - 12, y: centerY - 26, width: 6, height: 7))
             ctx.fillEllipse(in: CGRect(x: centerX + 7, y: centerY - 26, width: 6, height: 7))
+
+        case .sports:
+            // Soccer ball
+            ctx.setFillColor(UIColor.white.cgColor)
+            ctx.fillEllipse(in: CGRect(x: centerX - 35, y: centerY - 35, width: 70, height: 70))
+
+            // Soccer ball pattern (pentagons)
+            ctx.setFillColor(UIColor.black.cgColor)
+            let pentagonPositions: [(CGFloat, CGFloat)] = [
+                (0, 0), (-25, -15), (25, -15), (-20, 20), (20, 20)
+            ]
+            for (dx, dy) in pentagonPositions {
+                ctx.fillEllipse(in: CGRect(x: centerX + dx - 8, y: centerY + dy - 8, width: 16, height: 16))
+            }
+
+            // Trophy
+            ctx.setFillColor(UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1).cgColor)
+            ctx.fill(CGRect(x: centerX - 60, y: centerY + 20, width: 20, height: 40))
+            ctx.fillEllipse(in: CGRect(x: centerX - 70, y: centerY, width: 40, height: 30))
+
+            // Jersey number 10
+            let numberAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 36),
+                .foregroundColor: UIColor.white
+            ]
+            let number = "10"
+            let numberSize = number.size(withAttributes: numberAttrs)
+            number.draw(at: CGPoint(x: centerX + 40, y: centerY + 10), withAttributes: numberAttrs)
+
+            // Argentina flag stripes
+            ctx.setFillColor(UIColor(red: 0.45, green: 0.75, blue: 0.95, alpha: 0.6).cgColor)
+            ctx.fill(CGRect(x: centerX - 50, y: centerY + 65, width: 100, height: 10))
+            ctx.fill(CGRect(x: centerX - 50, y: centerY + 85, width: 100, height: 10))
         }
-        
+
         ctx.restoreGState()
     }
     
@@ -246,6 +286,7 @@ struct CardReferenceService {
         case .fire: elementColor = UIColor(red: 1, green: 0.8, blue: 0.3, alpha: 0.4)
         case .ice: elementColor = UIColor(red: 0.7, green: 0.9, blue: 1.0, alpha: 0.4)
         case .nature: elementColor = UIColor(red: 0.5, green: 1.0, blue: 0.5, alpha: 0.4)
+        case .sports: elementColor = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.4)
         }
         
         ctx.setFillColor(elementColor.cgColor)

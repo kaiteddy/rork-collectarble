@@ -7,7 +7,7 @@ nonisolated enum ModelLoadError: Error, Sendable {
     case downloadFailed
 }
 
-nonisolated class ModelLoaderService: Sendable {
+enum ModelLoaderService {
     static func downloadModel(from url: URL) async throws -> URL {
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let local = cache.appendingPathComponent(url.lastPathComponent)

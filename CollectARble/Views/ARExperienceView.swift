@@ -4,6 +4,8 @@ import ARKit
 
 struct ARExperienceView: View {
     @Binding var isPresented: Bool
+    var initialCreatureId: String = ""
+    var startInThrowMode: Bool = false
     @State private var viewModel = ARViewModel()
     @State private var attackTrigger: Int = 0
 
@@ -20,6 +22,21 @@ struct ARExperienceView: View {
                 ARUnavailablePlaceholder(isPresented: $isPresented)
             }
             #endif
+        }
+        .onAppear {
+            // Set the selected creature if coming from card collection
+            if !initialCreatureId.isEmpty {
+                if let index = viewModel.availableCreatures.firstIndex(where: { $0.id == initialCreatureId }) {
+                    viewModel.selectedCreatureIndex = index
+                }
+            }
+
+            // Auto-enter throw mode if requested (from card selection)
+            if startInThrowMode {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    viewModel.enterThrowMode()
+                }
+            }
         }
     }
 
@@ -55,6 +72,17 @@ struct ARExperienceView: View {
             VStack {
                 Spacer()
 
+                // Speech bubble from character
+                if viewModel.showSpeechBubble, let creature = viewModel.currentCreature {
+                    ARSpeechBubble(
+                        message: viewModel.lastCharacterMessage,
+                        creature: creature,
+                        isVisible: $viewModel.showSpeechBubble
+                    )
+                    .padding(.horizontal, 40)
+                    .transition(.scale.combined(with: .opacity))
+                }
+
                 // HP Bar (shown when creature is spawned)
                 if viewModel.isCreatureSpawned {
                     hpBar
@@ -66,6 +94,15 @@ struct ARExperienceView: View {
         }
         .animation(.easeOut(duration: 0.15), value: viewModel.showAttackFlash)
         .animation(.spring(response: 0.4, dampingFraction: 0.6), value: viewModel.showDamageNumber)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: viewModel.showSpeechBubble)
+        .sheet(isPresented: $viewModel.showChat) {
+            if let creature = viewModel.currentCreature {
+                CharacterChatView(creature: creature, isPresented: $viewModel.showChat)
+                    .presentationDetents([.fraction(0.4), .medium])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackgroundInteraction(.enabled)
+            }
+        }
     }
 
     private var hpBar: some View {
@@ -167,9 +204,18 @@ struct ARExperienceView: View {
                     .transition(.scale.combined(with: .opacity))
             }
 
-            if !viewModel.isCreatureSpawned && !viewModel.isCardDetected && !viewModel.isPokeballAnimating {
+            if !viewModel.isCreatureSpawned && !viewModel.isCardDetected && !viewModel.isPokeballAnimating && !viewModel.isThrowMode {
                 scanHint
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                // Throw button
+                throwButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            if viewModel.isThrowMode {
+                throwModeHint
+                    .transition(.scale.combined(with: .opacity))
             }
 
             if viewModel.isPokeballAnimating {
@@ -196,8 +242,11 @@ struct ARExperienceView: View {
                 interactionHint
                     .transition(.opacity)
 
-                attackButton
-                    .transition(.scale.combined(with: .opacity))
+                HStack(spacing: 12) {
+                    chatButton
+                    attackButton
+                }
+                .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.bottom, 40)
@@ -293,14 +342,19 @@ struct ARExperienceView: View {
     }
 
     private var pokeballHint: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "circle.fill")
+        let creature = viewModel.availableCreatures[viewModel.selectedCreatureIndex]
+        let isSports = creature.element == .sports
+        let ballName = isSports ? "Football" : "Pokéball"
+        let ballColor: Color = isSports ? .blue : .red
+
+        return HStack(spacing: 10) {
+            Image(systemName: isSports ? "soccerball" : "circle.fill")
                 .font(.title3)
-                .foregroundStyle(.red)
+                .foregroundStyle(ballColor)
                 .symbolEffect(.pulse, isActive: viewModel.isPokeballAnimating)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Pokéball activated!")
+                Text("\(ballName) activated!")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
 
@@ -358,28 +412,111 @@ struct ARExperienceView: View {
             attackTrigger += 1
             viewModel.triggerAttack()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "bolt.fill")
                     .font(.title3)
                     .symbolEffect(.bounce, value: attackTrigger)
 
                 if let creature = viewModel.currentCreature {
                     Text(creature.attackName)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                 }
             }
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
+            .frame(height: 50)
+            .padding(.horizontal, 20)
             .background(
                 viewModel.currentCreature?.element.displayColor ?? accentBlue,
-                in: .rect(cornerRadius: 16)
+                in: .rect(cornerRadius: 14)
             )
             .opacity(viewModel.isAttacking ? 0.6 : 1.0)
         }
         .disabled(viewModel.isAttacking)
-        .padding(.horizontal, 40)
         .sensoryFeedback(.impact(weight: .heavy), trigger: attackTrigger)
+    }
+
+    private var chatButton: some View {
+        Button {
+            viewModel.openChat()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.fill")
+                    .font(.title3)
+                Text("Chat")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .frame(height: 50)
+            .padding(.horizontal, 20)
+            .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+        }
+    }
+
+    private var throwButton: some View {
+        let creature = viewModel.availableCreatures[viewModel.selectedCreatureIndex]
+        let isSports = creature.element == .sports
+        let ballName = isSports ? "Football" : "Pokeball"
+        let ballColor: Color = isSports ? .blue : .red
+
+        return Button {
+            viewModel.enterThrowMode()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSports ? "soccerball" : "circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(ballColor)
+                Text("Throw \(ballName)")
+                    .font(.headline)
+            }
+            .foregroundStyle(.white)
+            .frame(height: 56)
+            .padding(.horizontal, 24)
+            .background(
+                LinearGradient(colors: [ballColor, ballColor.opacity(0.7)], startPoint: .top, endPoint: .bottom),
+                in: .rect(cornerRadius: 16)
+            )
+        }
+        .padding(.top, 8)
+    }
+
+    private var throwModeHint: some View {
+        let creature = viewModel.availableCreatures[viewModel.selectedCreatureIndex]
+        let isSports = creature.element == .sports
+        let ballName = isSports ? "Football" : "Pokeball"
+        let ballColor: Color = isSports ? .blue : .red
+
+        return VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: isSports ? "soccerball" : "hand.draw.fill")
+                    .font(.title3)
+                    .foregroundStyle(ballColor)
+                    .symbolEffect(.pulse, isActive: viewModel.isReadyToThrow)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Throw Mode Active")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text("Swipe forward to throw the \(ballName)!")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.exitThrowMode()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 16))
+        .padding(.horizontal, 20)
     }
 }
 
@@ -440,27 +577,60 @@ struct ARViewContainer: UIViewRepresentable {
         @objc func handleTap(_ sender: UITapGestureRecognizer) {
             guard let arView = sender.view as? ARView else { return }
             let location = sender.location(in: arView)
+            print("DEBUG: Tap detected at \(location)")
 
             if viewModel.isCreatureSpawned {
+                print("DEBUG: Creature spawned, triggering attack")
                 viewModel.triggerAttack()
                 return
             }
 
-            guard !viewModel.isPokeballAnimating else { return }
+            guard !viewModel.isPokeballAnimating else {
+                print("DEBUG: Pokeball animating, ignoring tap")
+                return
+            }
 
+            print("DEBUG: Attempting raycast...")
             let results = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal)
+            print("DEBUG: Raycast results (estimated): \(results.count)")
             if let result = results.first {
+                print("DEBUG: Spawning at estimated plane")
                 viewModel.spawnCreature(at: result.worldTransform)
                 return
             }
 
             let fallback = arView.raycast(from: location, allowing: .existingPlaneGeometry, alignment: .horizontal)
+            print("DEBUG: Raycast results (existing): \(fallback.count)")
             if let result = fallback.first {
+                print("DEBUG: Spawning at existing plane")
                 viewModel.spawnCreature(at: result.worldTransform)
+            } else {
+                print("DEBUG: No plane detected - point at a flat surface")
             }
         }
 
         @objc func handlePan(_ sender: UIPanGestureRecognizer) {
+            // Handle throw gesture in throw mode
+            if viewModel.isThrowMode && viewModel.isReadyToThrow {
+                if sender.state == .ended {
+                    let velocity = sender.velocity(in: sender.view)
+                    let speed = sqrt(velocity.x * velocity.x + velocity.y * velocity.y)
+                    print("DEBUG: Pan ended in throw mode, velocity: \(velocity), speed: \(speed)")
+
+                    // Throw if flicking with enough speed (accept any direction, prefer upward)
+                    // Speed threshold of 200 is quite low, making it easy to throw
+                    if speed > 200 {
+                        print("DEBUG: Throw gesture detected - speed \(speed) > 200")
+                        // Convert velocity: negative y means upward flick (forward throw)
+                        viewModel.handleThrowGesture(velocity: velocity)
+                    } else {
+                        print("DEBUG: Gesture too slow for throw, speed \(speed) < 200")
+                    }
+                }
+                return
+            }
+
+            // Handle rotation when creature is spawned
             guard viewModel.isCreatureSpawned else { return }
 
             switch sender.state {
@@ -480,7 +650,11 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         @objc func handlePinch(_ sender: UIPinchGestureRecognizer) {
-            guard viewModel.isCreatureSpawned else { return }
+            print("DEBUG: Pinch gesture state: \(sender.state.rawValue), scale: \(sender.scale)")
+            guard viewModel.isCreatureSpawned else {
+                print("DEBUG: Creature not spawned, ignoring pinch")
+                return
+            }
 
             switch sender.state {
             case .changed:

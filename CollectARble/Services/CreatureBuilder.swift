@@ -17,6 +17,8 @@ struct CreatureBuilder {
             buildIceCreature(root: root, creature: creature)
         case .nature:
             buildNatureCreature(root: root, creature: creature)
+        case .sports:
+            buildSportsCreature(root: root, creature: creature)
         }
 
         root.scale = SIMD3<Float>(repeating: 0.001)
@@ -162,5 +164,64 @@ struct CreatureBuilder {
         root.addChild(canopy)
         root.addChild(leaf1)
         root.addChild(leaf2)
+    }
+
+    private static func buildSportsCreature(root: Entity, creature: Creature) {
+        let bodyMaterial = SimpleMaterial(color: creature.element.primaryColor, roughness: 0.3, isMetallic: false)
+        let accentMaterial = SimpleMaterial(color: creature.element.secondaryColor, roughness: 0.2, isMetallic: true)
+
+        // Body (torso) - use cylinder instead of capsule
+        let body = ModelEntity(
+            mesh: .generateCylinder(height: 0.06, radius: 0.02),
+            materials: [bodyMaterial]
+        )
+        body.position = SIMD3<Float>(0, 0.07, 0)
+
+        // Head
+        let head = ModelEntity(
+            mesh: .generateSphere(radius: 0.018),
+            materials: [SimpleMaterial(color: UIColor(red: 0.9, green: 0.75, blue: 0.6, alpha: 1), roughness: 0.5, isMetallic: false)]
+        )
+        head.position = SIMD3<Float>(0, 0.115, 0)
+
+        // Hair
+        let hair = ModelEntity(
+            mesh: .generateSphere(radius: 0.015),
+            materials: [SimpleMaterial(color: UIColor(red: 0.2, green: 0.15, blue: 0.1, alpha: 1), roughness: 0.8, isMetallic: false)]
+        )
+        hair.position = SIMD3<Float>(0, 0.125, 0)
+
+        // Soccer ball
+        let ball = ModelEntity(
+            mesh: .generateSphere(radius: 0.012),
+            materials: [SimpleMaterial(color: .white, roughness: 0.3, isMetallic: false)]
+        )
+        ball.position = SIMD3<Float>(0.03, 0.02, 0)
+
+        // Trophy (golden)
+        let trophy = ModelEntity(
+            mesh: .generateCylinder(height: 0.025, radius: 0.008),
+            materials: [accentMaterial]
+        )
+        trophy.position = SIMD3<Float>(-0.03, 0.04, 0)
+
+        let trophyCup = ModelEntity(
+            mesh: .generateSphere(radius: 0.01),
+            materials: [accentMaterial]
+        )
+        trophyCup.position = SIMD3<Float>(-0.03, 0.055, 0)
+
+        let base = ModelEntity(
+            mesh: .generateCylinder(height: 0.01, radius: 0.05),
+            materials: [SimpleMaterial(color: UIColor(red: 0.1, green: 0.5, blue: 0.1, alpha: 1), roughness: 0.8, isMetallic: false)]
+        )
+
+        root.addChild(base)
+        root.addChild(body)
+        root.addChild(head)
+        root.addChild(hair)
+        root.addChild(ball)
+        root.addChild(trophy)
+        root.addChild(trophyCup)
     }
 }

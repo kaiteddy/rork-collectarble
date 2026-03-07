@@ -8,15 +8,17 @@ nonisolated struct Creature: Identifiable, Sendable {
     let description: String
     let bundledModelName: String?
     let animationModelName: String?
+    let modelScale: Float  // Scale for the 3D model when spawned
 
     nonisolated enum Element: String, Sendable {
-        case fire, ice, nature
+        case fire, ice, nature, sports
 
         var primaryColor: UIColor {
             switch self {
             case .fire: UIColor(red: 1.0, green: 0.35, blue: 0.15, alpha: 1.0)
             case .ice: UIColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 1.0)
             case .nature: UIColor(red: 0.2, green: 0.85, blue: 0.4, alpha: 1.0)
+            case .sports: UIColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1.0)
             }
         }
 
@@ -25,6 +27,7 @@ nonisolated struct Creature: Identifiable, Sendable {
             case .fire: UIColor(red: 1.0, green: 0.8, blue: 0.1, alpha: 1.0)
             case .ice: UIColor(red: 0.85, green: 0.95, blue: 1.0, alpha: 1.0)
             case .nature: UIColor(red: 0.6, green: 1.0, blue: 0.3, alpha: 1.0)
+            case .sports: UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)  // Gold
             }
         }
 
@@ -33,6 +36,7 @@ nonisolated struct Creature: Identifiable, Sendable {
             case .fire: "flame.fill"
             case .ice: "snowflake"
             case .nature: "leaf.fill"
+            case .sports: "sportscourt.fill"
             }
         }
 
@@ -49,25 +53,18 @@ nonisolated struct Creature: Identifiable, Sendable {
             attackName: "Flamethrower",
             description: "A fearsome fire-breathing dragon that soars through the skies.",
             bundledModelName: "Charizard_SV",
-            animationModelName: "Charizard_Flying_Animation"
+            animationModelName: "Charizard_Flying_Animation",
+            modelScale: 0.003
         ),
         Creature(
-            id: "glacius",
-            name: "Glacius",
-            element: .ice,
-            attackName: "Frost Nova",
-            description: "An ancient ice guardian from the frozen peaks.",
-            bundledModelName: nil,
-            animationModelName: nil
-        ),
-        Creature(
-            id: "verdant",
-            name: "Verdant",
-            element: .nature,
-            attackName: "Thorn Storm",
-            description: "A nature spirit who commands the power of the forest.",
-            bundledModelName: nil,
-            animationModelName: nil
+            id: "messi",
+            name: "Lionel Messi",
+            element: .sports,
+            attackName: "Golden Goal",
+            description: "The greatest footballer of all time. 8 Ballon d'Or winner.",
+            bundledModelName: "Lionel_messi",
+            animationModelName: nil,
+            modelScale: 0.006  // Larger scale for Messi
         ),
     ]
 

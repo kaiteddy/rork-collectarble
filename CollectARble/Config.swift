@@ -11,4 +11,10 @@ enum Config {
     // Environment variables will be injected here at build time
     // Add your ENV in Project Settings → Environment Variables
     // Then use Config.YOUR_ENV_NAME in code
+
+    /// Anthropic API key for Claude-powered character chat
+    /// Set ANTHROPIC_API_KEY in Xcode scheme environment variables
+    static var anthropicAPIKey: String {
+        ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    }
 }

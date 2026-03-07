@@ -8,14 +8,17 @@ struct PokeballAnimationService {
             if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
                 do {
                     let entity = try await Entity(contentsOf: url)
-                    entity.scale = SIMD3<Float>(repeating: 0.0001)
-                    entity.position = SIMD3<Float>(0, 0.15, 0)
+                    entity.scale = SIMD3<Float>(repeating: 0.0001)  // Small but visible
+                    entity.position = SIMD3<Float>(0, 0.05, 0)  // Start above surface
+                    print("DEBUG: Loaded pokeball USDZ, initial scale \(entity.scale)")
                     return entity
                 } catch {
+                    print("DEBUG: Failed to load pokeball \(name): \(error)")
                     continue
                 }
             }
         }
+        print("DEBUG: Using fallback pokeball")
         return createFallbackPokeball()
     }
 
@@ -51,8 +54,8 @@ struct PokeballAnimationService {
         root.addChild(band)
         root.addChild(button)
 
-        root.scale = SIMD3<Float>(repeating: 0.0001)
-        root.position = SIMD3<Float>(0, 0.15, 0)
+        root.scale = SIMD3<Float>(repeating: 0.0001)  // Match USDZ scale
+        root.position = SIMD3<Float>(0, 0.05, 0)  // Start above surface
 
         return root
     }
@@ -65,8 +68,8 @@ struct PokeballAnimationService {
         onCreatureReady: @escaping (Entity) -> Void
     ) async {
         var landTransform = pokeball.transform
-        landTransform.scale = SIMD3<Float>(repeating: 0.006)
-        landTransform.translation = SIMD3<Float>(0, 0.01, 0)
+        landTransform.scale = SIMD3<Float>(repeating: 0.0002)  // Visible pokeball on surface
+        landTransform.translation = SIMD3<Float>(0, 0.02, 0)  // Sit just above surface
         pokeball.move(to: landTransform, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
 
         try? await Task.sleep(for: .seconds(0.55))
@@ -85,37 +88,61 @@ struct PokeballAnimationService {
         pokeball.move(to: resetRotation, relativeTo: anchor, duration: 0.08, timingFunction: .easeOut)
         try? await Task.sleep(for: .seconds(0.1))
 
-        let flashParticles = createOpenFlash(at: pokeball.position(relativeTo: anchor))
+        // Create the flash at the pokéball position before shrinking it
+        let pokeballPos = pokeball.position(relativeTo: anchor)
+        let flashParticles = createOpenFlash(at: pokeballPos)
         for particle in flashParticles {
             anchor.addChild(particle)
         }
 
-        var openBurstTransform = pokeball.transform
-        openBurstTransform.scale = SIMD3<Float>(repeating: 0.009)
-        pokeball.move(to: openBurstTransform, relativeTo: anchor, duration: 0.2, timingFunction: .easeOut)
+        // Rapidly shrink the pokéball to zero — the "burst open" moment
+        var vanishTransform = pokeball.transform
+        vanishTransform.scale = SIMD3<Float>(repeating: 0.00001)
+        pokeball.move(to: vanishTransform, relativeTo: anchor, duration: 0.2, timingFunction: .easeIn)
+
+        // Expanding energy sphere at the open point
+        let energySphere = ModelEntity(
+            mesh: .generateSphere(radius: 0.003),
+            materials: [SimpleMaterial(color: .white, roughness: 0.0, isMetallic: true)]
+        )
+        energySphere.position = pokeballPos + SIMD3<Float>(0, 0.005, 0)
+        anchor.addChild(energySphere)
+
+        var sphereExpand = energySphere.transform
+        sphereExpand.scale = SIMD3<Float>(repeating: 6.0)
+        energySphere.move(to: sphereExpand, relativeTo: anchor, duration: 0.35, timingFunction: .easeOut)
+
+        // Radial energy ring burst
+        let ringParticles = createEnergyRing(at: pokeballPos + SIMD3<Float>(0, 0.01, 0), color: creature.element.primaryColor)
+        for particle in ringParticles {
+            anchor.addChild(particle)
+        }
+
         try? await Task.sleep(for: .seconds(0.3))
 
-        var splitTopTransform = pokeball.transform
-        splitTopTransform.translation.y += 0.02
-        splitTopTransform.scale = SIMD3<Float>(repeating: 0.004)
-        pokeball.move(to: splitTopTransform, relativeTo: anchor, duration: 0.4, timingFunction: .easeOut)
+        // Fade out the energy sphere
+        var sphereFade = energySphere.transform
+        sphereFade.scale = SIMD3<Float>(repeating: 0.01)
+        energySphere.move(to: sphereFade, relativeTo: anchor, duration: 0.4, timingFunction: .easeIn)
 
-        try? await Task.sleep(for: .seconds(0.2))
+        try? await Task.sleep(for: .seconds(0.1))
 
         if creature.bundledModelName != nil {
             let creatureEntity = await loadCreatureModel(for: creature)
             creatureEntity.scale = SIMD3<Float>(repeating: 0.0001)
-            creatureEntity.position = SIMD3<Float>(0, 0.005, 0)
+            creatureEntity.position = SIMD3<Float>(0, 0, 0)  // Start at anchor level
             anchor.addChild(creatureEntity)
 
-            let targetScale: Float = 0.0004
+            // Scale creature based on creature's defined scale
+            let targetScale: Float = creature.modelScale
+            print("DEBUG: PokeballService spawning creature at scale \(targetScale)")
             var creatureTarget = creatureEntity.transform
             creatureTarget.scale = SIMD3<Float>(repeating: targetScale)
-            creatureTarget.translation = SIMD3<Float>(0, 0.005, 0)
-            creatureEntity.move(to: creatureTarget, relativeTo: anchor, duration: 0.8, timingFunction: .easeOut)
+            creatureTarget.translation = SIMD3<Float>(0, 0, 0)  // On the surface
+            creatureEntity.move(to: creatureTarget, relativeTo: anchor, duration: 0.6, timingFunction: .easeOut)
 
             let burstParticles = createEnergyBurst(
-                at: SIMD3<Float>(0, 0.02, 0),
+                at: SIMD3<Float>(0, 0.01, 0),
                 color: creature.element.primaryColor,
                 secondaryColor: creature.element.secondaryColor
             )
@@ -123,7 +150,7 @@ struct PokeballAnimationService {
                 anchor.addChild(particle)
             }
 
-            try? await Task.sleep(for: .seconds(0.8))
+            try? await Task.sleep(for: .seconds(0.6))
 
             for animation in creatureEntity.availableAnimations {
                 creatureEntity.playAnimation(animation.repeat())
@@ -131,35 +158,25 @@ struct PokeballAnimationService {
 
             onCreatureReady(creatureEntity)
 
-            try? await Task.sleep(for: .seconds(0.5))
+            try? await Task.sleep(for: .seconds(0.8))
 
-            var pokeballFade = pokeball.transform
-            pokeballFade.scale = SIMD3<Float>(repeating: 0.0001)
-            pokeballFade.translation.y = 0.04
-            pokeball.move(to: pokeballFade, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
-
-            try? await Task.sleep(for: .seconds(1.5))
-            for particle in flashParticles + burstParticles {
+            // Clean up all particles and pokéball
+            for particle in flashParticles + burstParticles + ringParticles + [energySphere] {
                 particle.removeFromParent()
             }
             pokeball.removeFromParent()
         } else {
             let creatureEntity = CreatureBuilder.buildCreature(for: creature)
-            creatureEntity.position.y = 0.01
+            creatureEntity.position.y = 0.005
             anchor.addChild(creatureEntity)
             CreatureBuilder.animateSpawn(entity: creatureEntity)
 
             onCreatureReady(creatureEntity)
 
-            try? await Task.sleep(for: .seconds(0.5))
+            try? await Task.sleep(for: .seconds(0.8))
 
-            var pokeballFade = pokeball.transform
-            pokeballFade.scale = SIMD3<Float>(repeating: 0.0001)
-            pokeballFade.translation.y = 0.04
-            pokeball.move(to: pokeballFade, relativeTo: anchor, duration: 0.5, timingFunction: .easeIn)
-
-            try? await Task.sleep(for: .seconds(1.5))
-            for particle in flashParticles {
+            // Clean up all particles and pokéball
+            for particle in flashParticles + ringParticles + [energySphere] {
                 particle.removeFromParent()
             }
             pokeball.removeFromParent()
@@ -183,6 +200,35 @@ struct PokeballAnimationService {
         }
 
         return CreatureBuilder.buildCreature(for: creature)
+    }
+
+    private static func createEnergyRing(at position: SIMD3<Float>, color: UIColor) -> [Entity] {
+        var particles: [Entity] = []
+        let material = SimpleMaterial(color: color, roughness: 0.0, isMetallic: true)
+        let whiteMat = SimpleMaterial(color: .white, roughness: 0.0, isMetallic: true)
+
+        for i in 0..<20 {
+            let angle = Float(i) / 20.0 * .pi * 2
+            let mat = i % 3 == 0 ? whiteMat : material
+            let size = Float.random(in: 0.001...0.0025)
+            let particle = ModelEntity(
+                mesh: .generateSphere(radius: size),
+                materials: [mat]
+            )
+            particle.position = position
+
+            let spread = Float.random(in: 0.025...0.04)
+            let height = Float.random(in: -0.005...0.01)
+            var target = particle.transform
+            target.translation = position + SIMD3<Float>(cos(angle) * spread, height, sin(angle) * spread)
+            target.scale = SIMD3<Float>(repeating: 0.1)
+            let duration = Double.random(in: 0.3...0.5)
+            particle.move(to: target, relativeTo: nil, duration: duration, timingFunction: .easeOut)
+
+            particles.append(particle)
+        }
+
+        return particles
     }
 
     private static func createOpenFlash(at position: SIMD3<Float>) -> [Entity] {
