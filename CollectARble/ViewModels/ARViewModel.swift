@@ -47,6 +47,7 @@ class ARViewModel {
     private var creatureAnchor: AnchorEntity?
     private var currentCreatureScale: Float = 0.003
     private var idlePhase: Float = 0
+    private var creatureYawAngle: Float = 0  // Track creature's Y-axis rotation
     private var trackedImageAnchorID: UUID?
     private var isTrackingWithCard: Bool = false  // True when spawned from card detection
 
@@ -178,6 +179,7 @@ class ARViewModel {
                         self.statusMessage = "\(ballName) is opening..."
                     },
                     onCreatureReady: { entity in
+                        self.creatureYawAngle = 0
                         self.creatureEntity = entity
                         self.isCreatureSpawned = true
                         self.isPokeballAnimating = false
@@ -239,6 +241,7 @@ class ARViewModel {
                         self.statusMessage = "\(ballName) is opening..."
                     },
                     onCreatureReady: { entity in
+                        self.creatureYawAngle = 0
                         self.creatureEntity = entity
                         self.isCreatureSpawned = true
                         self.isPokeballAnimating = false
@@ -253,6 +256,8 @@ class ARViewModel {
     }
 
     private func spawnWithoutPokeball(creature: Creature, anchor: AnchorEntity) async {
+        creatureYawAngle = 0  // Reset rotation for new creature
+
         if creature.bundledModelName != nil {
             statusMessage = "Loading \(creature.name)..."
             let entity = await loadBundledModel(for: creature)
@@ -293,21 +298,29 @@ class ARViewModel {
     // MARK: - Gestures
 
     func handlePanGesture(translation: CGPoint) {
-        guard let entity = creatureEntity else {
-            print("DEBUG: Pan gesture - no creature entity")
-            return
-        }
+        guard let entity = creatureEntity, let anchor = creatureAnchor else { return }
 
-        print("DEBUG: Pan gesture translation: \(translation)")
+        // Stop idle animation to prevent conflicts
+        idleTimer?.invalidate()
+        idleTimer = nil
 
         // Only use horizontal (X) component for rotation
         let rotationSpeed: Float = 0.01
-        let yaw = Float(translation.x) * rotationSpeed
+        creatureYawAngle += Float(translation.x) * rotationSpeed
 
-        // Apply only Y-axis rotation
-        let currentRotation = entity.transform.rotation
-        let deltaRotation = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
-        entity.transform.rotation = deltaRotation * currentRotation
+        // Build complete transform with current values
+        var newTransform = Transform()
+        newTransform.scale = entity.scale
+        newTransform.rotation = simd_quatf(angle: creatureYawAngle, axis: SIMD3<Float>(0, 1, 0))
+        newTransform.translation = entity.position(relativeTo: anchor)
+
+        // Apply transform directly (no animation)
+        entity.transform = newTransform
+    }
+
+    func handlePanGestureEnded() {
+        // Restart idle animation after user stops panning
+        startIdleLoop()
     }
 
     func handlePinchGesture(scale: Float) {
@@ -315,14 +328,12 @@ class ARViewModel {
         let newScale = currentCreatureScale * scale
         // Cap max scale to keep creature within card bounds (~65mm card)
         let clampedScale = min(max(newScale, 0.001), 0.01)
-        print("DEBUG: Pinch scale changed to \(clampedScale)")
         entity.scale = SIMD3<Float>(repeating: clampedScale)
     }
 
     func handlePinchEnd(scale: Float) {
         let newScale = currentCreatureScale * scale
         currentCreatureScale = min(max(newScale, 0.001), 0.01)
-        print("DEBUG: Pinch ended, new scale = \(currentCreatureScale)")
     }
 
     // MARK: - Attack
@@ -403,6 +414,10 @@ class ARViewModel {
         idleTimer?.invalidate()
         idleTimer = nil
 
+        // Remove any existing pokeball from previous spawn
+        pokeballEntity?.removeFromParent()
+        pokeballEntity = nil
+
         // Load a pokeball for the capture animation
         let ballType = SpawnBallService.ballType(for: creature)
         guard let ball = await SpawnBallService.loadBall(type: ballType) else {
@@ -410,7 +425,8 @@ class ARViewModel {
             return
         }
 
-        // Position ball above creature
+        // Store reference and position ball above creature
+        pokeballEntity = ball
         ball.position = creatureEntity.position + SIMD3<Float>(0, 0.15, 0)
         ball.scale = SIMD3<Float>(repeating: ballType.landedScale * 0.5)
         anchor.addChild(ball)
@@ -551,24 +567,39 @@ class ARViewModel {
         droppedCardAnchor = anchor
 
         Task {
-            // Create a 3D card entity
+            // Create card entity (3D USDZ for Charizard, 2D textured for others)
             let cardEntity = await createDroppedCard(for: creature)
             droppedCardEntity = cardEntity
             print("DEBUG: Created dropped card entity for \(creature.name)")
 
+            // Check if this is the 3D Charizard card
+            let isCharizard3D = cardEntity.name == "charizard3DCard"
+
+            // Save the target scale (set by loadCharizard3DCard for USDZ, or 1.0 for 2D)
+            let targetScale = isCharizard3D ? cardEntity.scale : SIMD3<Float>(repeating: 1.0)
+
+            // For USDZ, save the pre-configured flat orientation
+            let flatOrientation = cardEntity.orientation
+
             // Start card high above the surface, small scale
             cardEntity.position = SIMD3<Float>(0, 0.5, 0)
-            cardEntity.scale = SIMD3<Float>(repeating: 0.01)  // Start small
+            cardEntity.scale = targetScale * 0.01  // Start at 1% of target size
 
-            // Initial rotation - card horizontal but tilted back (front facing slightly toward camera)
-            cardEntity.orientation = simd_quatf(angle: .pi * 0.1, axis: SIMD3<Float>(1, 0, 0))
+            // Initial rotation - tilted toward camera
+            if isCharizard3D {
+                // For USDZ: start from flat orientation, add tilt
+                let tilt = simd_quatf(angle: .pi * 0.15, axis: SIMD3<Float>(1, 0, 0))
+                cardEntity.orientation = tilt * flatOrientation
+            } else {
+                cardEntity.orientation = simd_quatf(angle: .pi * 0.15, axis: SIMD3<Float>(1, 0, 0))
+            }
 
             anchor.addChild(cardEntity)
-            print("DEBUG: Card added to anchor at position \(cardEntity.position)")
+            print("DEBUG: Card added, isCharizard3D: \(isCharizard3D), targetScale: \(targetScale)")
 
-            // Animate card growing to full size (1.0 = real world size since mesh is in meters)
+            // Animate card growing to full size
             var growTransform = cardEntity.transform
-            growTransform.scale = SIMD3<Float>(repeating: 1.0)  // Full size (63mm x 88mm)
+            growTransform.scale = targetScale
             cardEntity.move(to: growTransform, relativeTo: anchor, duration: 0.3, timingFunction: .easeOut)
             try? await Task.sleep(for: .seconds(0.3))
             print("DEBUG: Card scaled to full size")
@@ -576,11 +607,17 @@ class ARViewModel {
             // Card tumbles and falls to the surface
             statusMessage = "\(creature.name) card incoming!"
 
-            // Fall with slight tumble rotation
+            // Fall with rotation to lay flat
             let fallDuration: Double = 0.5
             var fallTransform = cardEntity.transform
             fallTransform.translation = SIMD3<Float>(0, 0.005, 0)  // Land just above surface
-            fallTransform.rotation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))  // Flat
+
+            // Final flat orientation - card lying on surface with front facing up
+            if isCharizard3D {
+                fallTransform.rotation = flatOrientation
+            } else {
+                fallTransform.rotation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+            }
             cardEntity.move(to: fallTransform, relativeTo: anchor, duration: fallDuration, timingFunction: .easeIn)
 
             try? await Task.sleep(for: .seconds(fallDuration))
@@ -615,20 +652,75 @@ class ARViewModel {
 
     private func createDroppedCard(for creature: Creature) async -> Entity {
         print("DEBUG: Creating dropped card for \(creature.name)")
+
+        // For Charizard, use the 3D USDZ card model (same as collection view)
+        if creature.id == "charizard" {
+            if let usdzCard = await loadCharizard3DCard() {
+                return usdzCard
+            }
+        }
+
+        // For other creatures, use 2D textured card
         return await create2DCard(for: creature)
+    }
+
+    /// Load the Charizard 3D holographic card USDZ model with correct scaling
+    private func loadCharizard3DCard() async -> Entity? {
+        let possibleNames = [
+            "Pokemon_TCG_Charizard_1st_Edition",
+            "PokemonTCGCharizard1stEdition",
+            "pokemon_tcg_charizard_1st_edition"
+        ]
+
+        for name in possibleNames {
+            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
+                print("DEBUG: Loading Charizard 3D card: \(name)")
+                do {
+                    let entity = try await Entity(contentsOf: url)
+
+                    // Get model bounds - the model is ~248 x 1 x 346 units
+                    let bounds = entity.visualBounds(relativeTo: nil)
+                    let modelWidth = bounds.extents.x   // ~248
+                    let modelDepth = bounds.extents.z   // ~346 (card height in model)
+
+                    print("DEBUG: Charizard 3D card bounds: w=\(modelWidth), d=\(modelDepth)")
+
+                    // Scale to real trading card size, slightly larger for visibility
+                    // 0.0004 makes the card ~140mm tall (larger than real card but easier to see)
+                    let scale: Float = 0.0004
+
+                    entity.scale = SIMD3<Float>(repeating: scale)
+                    print("DEBUG: Charizard 3D card using fixed scale: \(scale)")
+
+                    // The USDZ model is oriented standing up, we need to lay it flat
+                    // Rotate +90° on X to lay flat (face up), no Y rotation needed
+                    // The card should face upward with the top of the card away from camera
+                    let layFlat = simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(1, 0, 0))
+                    entity.orientation = layFlat
+
+                    entity.name = "charizard3DCard"
+                    print("DEBUG: Charizard 3D card loaded and configured")
+                    return entity
+                } catch {
+                    print("DEBUG: Failed to load Charizard 3D card: \(error)")
+                    continue
+                }
+            }
+        }
+
+        print("DEBUG: Charizard 3D card USDZ not found")
+        return nil
     }
 
     /// Create 2D card with texture
     private func create2DCard(for creature: Creature) async -> Entity {
-        // Standard trading card: 63mm x 88mm
+        // Standard trading card: 63mm x 88mm (aspect ratio 0.716)
+        // Keep fixed dimensions - the image will stretch to fill the card
         let cardWidth: Float = 0.063
         let cardHeight: Float = 0.088
 
         let cardEntity = Entity()
         cardEntity.name = "droppedCard"
-
-        // Create the front face as a plane
-        let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
         // Load the card image - same images used in CardCollectionView
         var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
@@ -643,25 +735,28 @@ class ARViewModel {
             cardImageName = ""
         }
 
-        if let cardImage = loadCardImage(named: cardImageName) {
-            print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImage.size)")
+        if let cardImageRaw = loadCardImage(named: cardImageName) {
+            print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImageRaw.size)")
 
-            // Crop image to match card aspect ratio (63:88 = 0.716)
-            let targetAspect = CGFloat(cardWidth) / CGFloat(cardHeight)
-            let croppedImage = cropImageToAspectRatio(cardImage, targetAspect: targetAspect)
+            // Crop square images to card aspect ratio (63:88 = 0.716)
+            let cardImage = cropToCardAspect(cardImageRaw)
+            print("DEBUG: After crop: \(cardImage.size)")
 
-            if let cgImage = croppedImage.cgImage {
+            if let cgImage = cardImage.cgImage {
                 do {
                     let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
                     var unlitMaterial = UnlitMaterial()
                     unlitMaterial.color = .init(tint: .white, texture: .init(texture))
                     frontMaterial = unlitMaterial
-                    print("DEBUG: Card texture applied successfully, cropped to \(croppedImage.size)")
+                    print("DEBUG: Card texture applied successfully, image size: \(cardImage.size)")
                 } catch {
                     print("DEBUG: Failed to generate texture: \(error)")
                 }
             }
         }
+
+        // Create the front face as a plane with adjusted dimensions
+        let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
         // Front face plane
         let frontPlane = ModelEntity(mesh: frontPlaneMesh, materials: [frontMaterial])
@@ -1040,20 +1135,39 @@ class ARViewModel {
             cameraTransform.matrix.columns.3.y,
             cameraTransform.matrix.columns.3.z
         )
+
+        // Ensure minimum spawn distance of 0.5m from camera
+        let minSpawnDistance: Float = 0.5
+        var spawnPosition = position
         let distance = simd_distance(cameraPos, position)
-        print("DEBUG: Creature spawn distance from camera: \(distance)m")
+
+        if distance < minSpawnDistance {
+            // Push spawn position away from camera
+            let direction = simd_normalize(position - cameraPos)
+            // Project to horizontal plane (keep Y the same as card)
+            let horizontalDir = simd_normalize(SIMD3<Float>(direction.x, 0, direction.z))
+            spawnPosition = SIMD3<Float>(
+                cameraPos.x + horizontalDir.x * minSpawnDistance,
+                position.y,  // Keep at floor level
+                cameraPos.z + horizontalDir.z * minSpawnDistance
+            )
+            print("DEBUG: Card too close (\(distance)m), pushed spawn to \(minSpawnDistance)m")
+        }
+
+        let finalDistance = simd_distance(cameraPos, spawnPosition)
+        print("DEBUG: Creature spawn distance from camera: \(finalDistance)m")
 
         // Calculate adaptive scale based on distance
-        // At 0.5m: scale = 0.5x, at 1.5m: scale = 1.0x, at 3m+: scale = 1.5x
+        // At 0.5m: scale = 0.6x, at 1.0m: scale = 0.8x, at 1.5m+: scale = 1.0x
         let distanceScale: Float
-        if distance < 0.5 {
-            distanceScale = 0.4  // Very close - make it small
-        } else if distance < 1.0 {
-            distanceScale = 0.4 + (distance - 0.5) * 0.8  // 0.4 to 0.8
-        } else if distance < 2.0 {
-            distanceScale = 0.8 + (distance - 1.0) * 0.2  // 0.8 to 1.0
+        if finalDistance < 0.6 {
+            distanceScale = 0.6
+        } else if finalDistance < 1.0 {
+            distanceScale = 0.6 + (finalDistance - 0.6) * 0.5  // 0.6 to 0.8
+        } else if finalDistance < 1.5 {
+            distanceScale = 0.8 + (finalDistance - 1.0) * 0.4  // 0.8 to 1.0
         } else {
-            distanceScale = min(1.2, 1.0 + (distance - 2.0) * 0.1)  // 1.0 to 1.2 max
+            distanceScale = 1.0
         }
         print("DEBUG: Using distance scale multiplier: \(distanceScale)")
 
@@ -1063,12 +1177,12 @@ class ARViewModel {
             creatureAnchor = nil
         }
 
-        // Create anchor at landing position (on the floor)
+        // Create anchor at spawn position (may be adjusted from card position)
         let landTransform = simd_float4x4(
             SIMD4<Float>(1, 0, 0, 0),
             SIMD4<Float>(0, 1, 0, 0),
             SIMD4<Float>(0, 0, 1, 0),
-            SIMD4<Float>(position.x, position.y, position.z, 1)
+            SIMD4<Float>(spawnPosition.x, spawnPosition.y, spawnPosition.z, 1)
         )
 
         let anchor = AnchorEntity(world: landTransform)
@@ -1104,6 +1218,7 @@ class ARViewModel {
                         self.statusMessage = "\(ballName) is opening..."
                     },
                     onCreatureReady: { entity in
+                        self.creatureYawAngle = 0
                         self.creatureEntity = entity
                         self.isCreatureSpawned = true
                         self.isPokeballAnimating = false
@@ -1180,6 +1295,7 @@ class ARViewModel {
         isPokeballAnimating = false
         particleEntities = []
         detectedCardName = nil
+        creatureYawAngle = 0
         isCardDetected = false
         cardDetectionProgress = 0
         currentCreatureScale = 0.003
@@ -1254,16 +1370,20 @@ class ARViewModel {
             let bobHeight: Float = 0.001
             let targetY = (Int(self.idlePhase) % 2 == 0) ? baseY + bobHeight : baseY
 
-            var target = entity.transform
-            target.translation.y = targetY
-            // Keep current rotation without adding wobble to prevent drift
+            // Build transform with current scale and rotation, only animate Y position
+            var target = Transform()
+            target.scale = entity.scale
+            target.rotation = simd_quatf(angle: self.creatureYawAngle, axis: SIMD3<Float>(0, 1, 0))
+            target.translation = SIMD3<Float>(0, targetY, 0)
             entity.move(to: target, relativeTo: anchor, duration: 1.4, timingFunction: .easeInOut)
         }
 
         // Start the first bob immediately
         if let entity = creatureEntity, let anchor = creatureAnchor {
-            var target = entity.transform
-            target.translation.y = 0.002 + 0.001
+            var target = Transform()
+            target.scale = entity.scale
+            target.rotation = simd_quatf(angle: creatureYawAngle, axis: SIMD3<Float>(0, 1, 0))
+            target.translation = SIMD3<Float>(0, 0.002 + 0.001, 0)
             entity.move(to: target, relativeTo: anchor, duration: 1.4, timingFunction: .easeInOut)
         }
     }
@@ -1327,5 +1447,11 @@ class ARViewModel {
         }
 
         return UIImage(cgImage: croppedCGImage, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    /// Crop a square image to trading card aspect ratio (63:88 = 0.716)
+    private func cropToCardAspect(_ image: UIImage) -> UIImage {
+        let cardAspect: CGFloat = 63.0 / 88.0  // ~0.716
+        return cropImageToAspectRatio(image, targetAspect: cardAspect)
     }
 }

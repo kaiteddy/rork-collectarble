@@ -354,8 +354,8 @@ struct PokeballThrowService {
         // Target position centered in front of camera
         let targetPosition = cameraPosition + cameraForward * 0.3
 
-        // Smooth position with lerp (0.15 = smooth follow, higher = snappier)
-        let smoothFactor: Float = 0.15
+        // Smooth position with lerp (0.4 = snappier follow for better centering feel)
+        let smoothFactor: Float = 0.4
         let currentPos = ball.position
         ball.position = simd_mix(currentPos, targetPosition, SIMD3<Float>(repeating: smoothFactor))
 

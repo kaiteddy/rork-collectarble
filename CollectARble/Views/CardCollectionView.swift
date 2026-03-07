@@ -405,8 +405,12 @@ struct MessiCardView: UIViewRepresentable {
         let cardGeometry = SCNBox(width: 0.63, height: 0.88, length: 0.015, chamferRadius: 0.015)
 
         // Load front and back images from bundle
-        let frontImage = loadBundleImage(named: "messi_card_front") ?? createPlaceholderImage(text: "MESSI", color: .systemPink)
-        let backImage = loadBundleImage(named: "messi_card_back") ?? createPlaceholderImage(text: "BACK", color: .systemBlue)
+        let frontImageRaw = loadBundleImage(named: "messi_card_front") ?? createPlaceholderImage(text: "MESSI", color: .systemPink)
+        let backImageRaw = loadBundleImage(named: "messi_card_back") ?? createPlaceholderImage(text: "BACK", color: .systemBlue)
+
+        // Crop both images to card aspect ratio (0.716) if they're square
+        let frontImage = cropToCardAspect(frontImageRaw)
+        let backImage = cropToCardAspect(backImageRaw)
 
         // Front material - image fills the card face directly
         let frontMaterial = SCNMaterial()
@@ -529,6 +533,39 @@ struct MessiCardView: UIViewRepresentable {
             let textSize = text.size(withAttributes: attrs)
             text.draw(at: CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2), withAttributes: attrs)
         }
+    }
+
+    /// Crop a square image to trading card aspect ratio (63:88 = 0.716)
+    private func cropToCardAspect(_ image: UIImage) -> UIImage {
+        let imageSize = image.size
+        let imageAspect = imageSize.width / imageSize.height
+        let cardAspect: CGFloat = 63.0 / 88.0  // ~0.716
+
+        // If already close to card aspect, return as-is
+        if abs(imageAspect - cardAspect) < 0.05 {
+            return image
+        }
+
+        // Calculate crop rect to get card aspect ratio from center
+        var cropRect: CGRect
+        if imageAspect > cardAspect {
+            // Image is wider than card - crop width (keep full height)
+            let newWidth = imageSize.height * cardAspect
+            let xOffset = (imageSize.width - newWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: imageSize.height)
+        } else {
+            // Image is taller than card - crop height (keep full width)
+            let newHeight = imageSize.width / cardAspect
+            let yOffset = (imageSize.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: imageSize.width, height: newHeight)
+        }
+
+        guard let cgImage = image.cgImage,
+              let croppedCGImage = cgImage.cropping(to: cropRect) else {
+            return image
+        }
+
+        return UIImage(cgImage: croppedCGImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
 
