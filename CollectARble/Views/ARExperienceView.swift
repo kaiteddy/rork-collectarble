@@ -736,58 +736,45 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         @objc func handlePan(_ sender: UIPanGestureRecognizer) {
-            print("DEBUG: handlePan called, state: \(sender.state.rawValue), isThrowMode: \(viewModel.isThrowMode), isCreatureSpawned: \(viewModel.isCreatureSpawned)")
-
             // Handle throw gesture in throw mode
             if viewModel.isThrowMode && viewModel.isReadyToThrow {
                 if sender.state == .ended {
                     let velocity = sender.velocity(in: sender.view)
                     let speed = sqrt(velocity.x * velocity.x + velocity.y * velocity.y)
-                    print("DEBUG: Pan ended in throw mode, velocity: \(velocity), speed: \(speed)")
 
                     // Throw if flicking with enough speed (accept any direction, prefer upward)
                     // Speed threshold of 200 is quite low, making it easy to throw
                     if speed > 200 {
-                        print("DEBUG: Throw gesture detected - speed \(speed) > 200")
                         // Convert velocity: negative y means upward flick (forward throw)
                         viewModel.handleThrowGesture(velocity: velocity)
-                    } else {
-                        print("DEBUG: Gesture too slow for throw, speed \(speed) < 200")
                     }
                 }
                 return
             }
 
             // Handle rotation when creature is spawned
-            guard viewModel.isCreatureSpawned else {
-                print("DEBUG: Pan gesture - creature not spawned yet")
-                return
-            }
+            guard viewModel.isCreatureSpawned else { return }
 
             switch sender.state {
             case .began:
                 lastPanLocation = sender.location(in: sender.view)
-                print("DEBUG: Pan began at \(lastPanLocation)")
             case .changed:
                 let currentLocation = sender.location(in: sender.view)
                 let delta = CGPoint(
                     x: currentLocation.x - lastPanLocation.x,
                     y: currentLocation.y - lastPanLocation.y
                 )
-                print("DEBUG: Pan changed, delta: \(delta)")
                 viewModel.handlePanGesture(translation: delta)
                 lastPanLocation = currentLocation
+            case .ended, .cancelled:
+                viewModel.handlePanGestureEnded()
             default:
                 break
             }
         }
 
         @objc func handlePinch(_ sender: UIPinchGestureRecognizer) {
-            print("DEBUG: Pinch gesture state: \(sender.state.rawValue), scale: \(sender.scale)")
-            guard viewModel.isCreatureSpawned else {
-                print("DEBUG: Creature not spawned, ignoring pinch")
-                return
-            }
+            guard viewModel.isCreatureSpawned else { return }
 
             switch sender.state {
             case .changed:
