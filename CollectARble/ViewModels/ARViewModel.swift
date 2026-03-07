@@ -518,12 +518,30 @@ class ARViewModel {
     // MARK: - Card Drop Mode (Summon from Collection)
 
     func enterCardDropMode() {
-        guard let arView, !isCreatureSpawned, !isPokeballAnimating else { return }
+        guard let arView, !isCreatureSpawned, !isPokeballAnimating else {
+            print("DEBUG: enterCardDropMode failed - arView:\(arView != nil) spawned:\(isCreatureSpawned) animating:\(isPokeballAnimating)")
+            return
+        }
 
         isCardDropMode = true
         waitingForSurface = true
         isCardOnSurface = false
         statusMessage = "Tap a surface to place your card..."
+        print("DEBUG: Entered card drop mode successfully")
+    }
+
+    /// Try to enter card drop mode, returns true if successful
+    func enterCardDropModeIfReady() -> Bool {
+        guard arView != nil, !isCreatureSpawned, !isPokeballAnimating else {
+            return false
+        }
+
+        isCardDropMode = true
+        waitingForSurface = true
+        isCardOnSurface = false
+        statusMessage = "Tap a surface to place your card..."
+        print("DEBUG: Entered card drop mode successfully")
+        return true
     }
 
     func dropCardOnSurface(at worldTransform: simd_float4x4) {

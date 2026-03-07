@@ -33,9 +33,26 @@ struct ARExperienceView: View {
 
             // Auto-enter card drop mode if requested (from card selection)
             if startInThrowMode {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    viewModel.enterCardDropMode()
-                }
+                // Try to enter card drop mode with retries until AR view is ready
+                tryEnterCardDropMode(attempts: 0)
+            }
+        }
+    }
+
+    /// Try to enter card drop mode with retries until AR view is ready
+    private func tryEnterCardDropMode(attempts: Int) {
+        // Wait for AR view to be ready (max 10 attempts = 5 seconds)
+        guard attempts < 10 else {
+            print("DEBUG: Failed to enter card drop mode after 10 attempts")
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if viewModel.enterCardDropModeIfReady() {
+                print("DEBUG: Entered card drop mode on attempt \(attempts + 1)")
+            } else {
+                print("DEBUG: AR not ready, retrying... attempt \(attempts + 1)")
+                tryEnterCardDropMode(attempts: attempts + 1)
             }
         }
     }
