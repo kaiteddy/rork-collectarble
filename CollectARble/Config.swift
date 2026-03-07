@@ -14,7 +14,7 @@ enum Config {
 
     /// Anthropic API key for Claude-powered character chat
     /// Set ANTHROPIC_API_KEY in Xcode scheme environment variables
-    static var anthropicAPIKey: String {
+    nonisolated static var anthropicAPIKey: String {
         ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
     }
 }

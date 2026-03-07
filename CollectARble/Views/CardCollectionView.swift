@@ -66,6 +66,21 @@ struct Card3DPreview: View {
                                 isDragging = false
                             }
                     )
+            } else if card.creatureId == "messi" {
+                MessiCardView(rotation: $rotation)
+                    .frame(height: 180)
+                    .clipShape(.rect(cornerRadius: 12))
+                    .shadow(color: .pink.opacity(0.5), radius: 12, y: 6)
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                isDragging = true
+                                rotation += value.translation.width * 0.5
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                            }
+                    )
             } else {
                 SceneKitCardView(card: card, rotation: $rotation)
                     .frame(height: 180)
@@ -373,6 +388,150 @@ struct CharizardCardView: UIViewRepresentable {
     }
 }
 
+// MARK: - Messi 3D Card View
+
+struct MessiCardView: UIViewRepresentable {
+    @Binding var rotation: Double
+
+    func makeUIView(context: Context) -> SCNView {
+        let sceneView = SCNView()
+        sceneView.backgroundColor = .clear
+        sceneView.antialiasingMode = .multisampling4X
+        sceneView.allowsCameraControl = false
+
+        let scene = SCNScene()
+
+        // Create card geometry (trading card proportions)
+        let cardGeometry = SCNBox(width: 0.63, height: 0.88, length: 0.015, chamferRadius: 0.015)
+
+        // Load front and back images from bundle
+        let frontImage = loadBundleImage(named: "messi_card_front") ?? createPlaceholderImage(text: "MESSI", color: .systemPink)
+        let backImage = loadBundleImage(named: "messi_card_back") ?? createPlaceholderImage(text: "BACK", color: .systemBlue)
+
+        // Front material - image fills the card face directly
+        let frontMaterial = SCNMaterial()
+        frontMaterial.diffuse.contents = frontImage
+        frontMaterial.lightingModel = .physicallyBased
+        frontMaterial.metalness.contents = 0.4
+        frontMaterial.roughness.contents = 0.3
+
+        // Back material
+        let backMaterial = SCNMaterial()
+        backMaterial.diffuse.contents = backImage
+        backMaterial.lightingModel = .physicallyBased
+        backMaterial.metalness.contents = 0.4
+        backMaterial.roughness.contents = 0.3
+
+        // Edge material (pink for Inter Miami)
+        let edgeMaterial = SCNMaterial()
+        edgeMaterial.diffuse.contents = UIColor(red: 0.96, green: 0.6, blue: 0.7, alpha: 1)
+        edgeMaterial.metalness.contents = 0.6
+        edgeMaterial.roughness.contents = 0.2
+
+        // SCNBox face order: front (+Z), right (+X), back (-Z), left (-X), top (+Y), bottom (-Y)
+        cardGeometry.materials = [frontMaterial, edgeMaterial, backMaterial, edgeMaterial, edgeMaterial, edgeMaterial]
+
+        let cardNode = SCNNode(geometry: cardGeometry)
+        cardNode.name = "card"
+        scene.rootNode.addChildNode(cardNode)
+
+        // Add subtle glow
+        let glowNode = SCNNode(geometry: SCNBox(width: 0.65, height: 0.90, length: 0.01, chamferRadius: 0.02))
+        let glowMaterial = SCNMaterial()
+        glowMaterial.diffuse.contents = UIColor.systemPink.withAlphaComponent(0.15)
+        glowMaterial.emission.contents = UIColor.systemPink.withAlphaComponent(0.2)
+        glowNode.geometry?.materials = [glowMaterial]
+        glowNode.position = SCNVector3(0, 0, -0.015)
+        cardNode.addChildNode(glowNode)
+
+        // Lighting
+        let keyLight = SCNNode()
+        keyLight.light = SCNLight()
+        keyLight.light?.type = .directional
+        keyLight.light?.intensity = 1000
+        keyLight.light?.color = UIColor.white
+        keyLight.position = SCNVector3(2, 3, 4)
+        keyLight.look(at: SCNVector3(0, 0, 0))
+        scene.rootNode.addChildNode(keyLight)
+
+        let fillLight = SCNNode()
+        fillLight.light = SCNLight()
+        fillLight.light?.type = .directional
+        fillLight.light?.intensity = 500
+        fillLight.position = SCNVector3(-2, 2, 3)
+        fillLight.look(at: SCNVector3(0, 0, 0))
+        scene.rootNode.addChildNode(fillLight)
+
+        let ambient = SCNNode()
+        ambient.light = SCNLight()
+        ambient.light?.type = .ambient
+        ambient.light?.intensity = 400
+        scene.rootNode.addChildNode(ambient)
+
+        // Camera
+        let cameraNode = SCNNode()
+        cameraNode.camera = SCNCamera()
+        cameraNode.camera?.fieldOfView = 35
+        cameraNode.position = SCNVector3(0, 0, 2.0)
+        cameraNode.look(at: SCNVector3(0, 0, 0))
+        scene.rootNode.addChildNode(cameraNode)
+
+        sceneView.scene = scene
+        sceneView.pointOfView = cameraNode
+
+        return sceneView
+    }
+
+    func updateUIView(_ sceneView: SCNView, context: Context) {
+        if let cardNode = sceneView.scene?.rootNode.childNode(withName: "card", recursively: false) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.05
+            cardNode.eulerAngles.y = Float(rotation * .pi / 180)
+            SCNTransaction.commit()
+        }
+    }
+
+    private func loadBundleImage(named name: String) -> UIImage? {
+        // Try multiple extensions
+        let extensions = ["png", "jpg", "jpeg"]
+        for ext in extensions {
+            if let path = Bundle.main.path(forResource: name, ofType: ext) {
+                print("DEBUG: Found Messi card image path: \(path)")
+                if let image = UIImage(contentsOfFile: path) {
+                    print("DEBUG: Successfully loaded image \(name): \(image.size)")
+                    return image
+                } else {
+                    print("DEBUG: UIImage(contentsOfFile:) returned nil for \(path)")
+                }
+            }
+        }
+        // Try loading from asset catalog as fallback
+        if let image = UIImage(named: name) {
+            print("DEBUG: Loaded \(name) from asset catalog: \(image.size)")
+            return image
+        }
+        print("DEBUG: Could not find Messi card image: \(name)")
+        return nil
+    }
+
+    private func createPlaceholderImage(text: String, color: UIColor) -> UIImage {
+        let size = CGSize(width: 630, height: 880)
+        let renderer = UIGraphicsImageRenderer(size: size)
+
+        return renderer.image { context in
+            color.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 80),
+                .foregroundColor: UIColor.white
+            ]
+            let textSize = text.size(withAttributes: attrs)
+            text.draw(at: CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2), withAttributes: attrs)
+        }
+    }
+}
+
 // MARK: - SceneKit Card View
 
 struct SceneKitCardView: UIViewRepresentable {
@@ -407,8 +566,8 @@ struct SceneKitCardView: UIViewRepresentable {
         edgeMaterial.diffuse.contents = card.elementColor
         edgeMaterial.metalness.contents = 0.5
 
-        // SCNBox face order: +X, -X, +Y, -Y, +Z (front), -Z (back)
-        cardGeometry.materials = [edgeMaterial, edgeMaterial, edgeMaterial, edgeMaterial, frontMaterial, backMaterial]
+        // SCNBox face order: front (+Z), right (+X), back (-Z), left (-X), top (+Y), bottom (-Y)
+        cardGeometry.materials = [frontMaterial, edgeMaterial, backMaterial, edgeMaterial, edgeMaterial, edgeMaterial]
 
         let cardNode = SCNNode(geometry: cardGeometry)
         cardNode.name = "card"
@@ -565,19 +724,15 @@ struct SceneKitCardView: UIViewRepresentable {
             hpText.draw(at: CGPoint(x: size.width - 80 - hpSize.width, y: 600), withAttributes: hpAttrs)
 
             // Description at bottom
-            let descAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 24),
-                .foregroundColor: UIColor.white.withAlphaComponent(0.9)
-            ]
             let descRect = CGRect(x: 60, y: 700, width: size.width - 120, height: 150)
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.alignment = .center
-            let descAttrsFull: [NSAttributedString.Key: Any] = [
+            let descAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 24),
                 .foregroundColor: UIColor.white.withAlphaComponent(0.9),
                 .paragraphStyle: paragraphStyle
             ]
-            (card.description as NSString).draw(in: descRect, withAttributes: descAttrsFull)
+            (card.description as NSString).draw(in: descRect, withAttributes: descAttrs)
         }
     }
 
@@ -652,16 +807,30 @@ struct CardDetailView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 // Large 3D card view
-                SceneKitCardView(card: card, rotation: $rotation)
-                    .frame(height: 350)
-                    .clipShape(.rect(cornerRadius: 16))
-                    .shadow(color: card.displayColor.opacity(0.5), radius: 20, y: 10)
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                rotation += value.translation.width * 0.3
-                            }
-                    )
+                ZStack {
+                    if card.creatureId == "charizard" {
+                        CharizardCardView(rotation: $rotation)
+                            .frame(height: 350)
+                            .clipShape(.rect(cornerRadius: 16))
+                            .shadow(color: .orange.opacity(0.5), radius: 20, y: 10)
+                    } else if card.creatureId == "messi" {
+                        MessiCardView(rotation: $rotation)
+                            .frame(height: 350)
+                            .clipShape(.rect(cornerRadius: 16))
+                            .shadow(color: .pink.opacity(0.5), radius: 20, y: 10)
+                    } else {
+                        SceneKitCardView(card: card, rotation: $rotation)
+                            .frame(height: 350)
+                            .clipShape(.rect(cornerRadius: 16))
+                            .shadow(color: card.displayColor.opacity(0.5), radius: 20, y: 10)
+                    }
+                }
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            rotation += value.translation.width * 0.3
+                        }
+                )
 
                 // Card info
                 VStack(spacing: 12) {

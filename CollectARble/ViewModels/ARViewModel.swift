@@ -27,6 +27,13 @@ class ARViewModel {
     var isReadyToThrow: Bool = false
     private var throwModeTimer: Timer?
 
+    // Card drop mode (summoning from collection)
+    var isCardDropMode: Bool = false
+    var isCardOnSurface: Bool = false
+    var waitingForSurface: Bool = false
+    private var droppedCardEntity: Entity?
+    private var droppedCardAnchor: AnchorEntity?
+
     // Chat
     var showChat: Bool = false
     var lastCharacterMessage: String = ""
@@ -41,6 +48,7 @@ class ARViewModel {
     private var currentCreatureScale: Float = 0.003
     private var idlePhase: Float = 0
     private var trackedImageAnchorID: UUID?
+    private var isTrackingWithCard: Bool = false  // True when spawned from card detection
 
     var availableCreatures: [Creature] {
         Creature.allCreatures
@@ -89,15 +97,24 @@ class ARViewModel {
         trackedImageAnchorID = imageAnchor.identifier
         isCardDetected = true
         cardDetectionProgress = 1.0
+        isTrackingWithCard = true  // Mark that we're tracking with a card
         statusMessage = "Card detected! Summoning creature..."
 
-        beginSpawn(at: imageAnchor.transform)
+        beginSpawnOnCard(imageAnchor: imageAnchor)
     }
 
     func handleImageAnchorUpdated(_ imageAnchor: ARImageAnchor) {
         // Update tracking state
         if imageAnchor.identifier == trackedImageAnchorID {
             isTrackingCard = imageAnchor.isTracked
+
+            // Update creature position to follow the card
+            if isTrackingWithCard && isCreatureSpawned, let anchor = creatureAnchor {
+                // Smoothly update anchor to follow card position
+                let newTransform = Transform(matrix: imageAnchor.transform)
+                anchor.transform = newTransform
+            }
+
             if !imageAnchor.isTracked && isCreatureSpawned {
                 statusMessage = "Move camera back to the card"
             } else if imageAnchor.isTracked && isCreatureSpawned {
@@ -116,7 +133,65 @@ class ARViewModel {
         // image anchors handle everything)
     }
 
-    // MARK: - Spawning
+    // MARK: - Spawning (Card-Tracked)
+
+    private func beginSpawnOnCard(imageAnchor: ARImageAnchor) {
+        guard let arView else { return }
+
+        let creature = availableCreatures[selectedCreatureIndex]
+        currentCreature = creature
+        detectedCardName = creature.id
+        isPokeballAnimating = true
+        isCardDetected = false
+        cardDetectionProgress = 0
+
+        // Set HP based on creature element
+        switch creature.element {
+        case .fire: creatureMaxHP = 120; creatureHP = 120
+        case .ice: creatureMaxHP = 100; creatureHP = 100
+        case .nature: creatureMaxHP = 90; creatureHP = 90
+        case .sports: creatureMaxHP = 110; creatureHP = 110
+        }
+
+        // Create anchor that will track with the card
+        // We use a world anchor but update its transform in handleImageAnchorUpdated
+        let anchor = AnchorEntity(world: imageAnchor.transform)
+        arView.scene.addAnchor(anchor)
+        creatureAnchor = anchor
+
+        let ballType = SpawnBallService.ballType(for: creature)
+        let ballName = ballType == .football ? "Football" : "Pokéball"
+        statusMessage = "Summoning \(creature.name)!"
+
+        Task {
+            if let ball = await SpawnBallService.loadBall(for: creature) {
+                pokeballEntity = ball
+                ball.position = SIMD3<Float>(0, 0.05, 0)  // Start above the card
+                anchor.addChild(ball)
+                statusMessage = "\(ballName) incoming!"
+
+                await SpawnBallService.runSpawnSequence(
+                    ball: ball,
+                    anchor: anchor,
+                    creature: creature,
+                    onBallLanded: {
+                        self.statusMessage = "\(ballName) is opening..."
+                    },
+                    onCreatureReady: { entity in
+                        self.creatureEntity = entity
+                        self.isCreatureSpawned = true
+                        self.isPokeballAnimating = false
+                        self.statusMessage = "\(creature.name) appeared! HP: \(self.creatureHP)/\(self.creatureMaxHP)"
+                        self.startIdleLoop()
+                    }
+                )
+            } else {
+                await spawnWithoutPokeball(creature: creature, anchor: anchor)
+            }
+        }
+    }
+
+    // MARK: - Spawning (World-Fixed)
 
     func spawnCreature(at worldTransform: simd_float4x4) {
         guard !isCreatureSpawned, !isPokeballAnimating else { return }
@@ -299,10 +374,338 @@ class ARViewModel {
             isAttacking = false
 
             if creatureHP <= 0 {
-                statusMessage = "\(creature.name) fainted! Tap reset to try again"
-                creatureHP = creatureMaxHP
+                statusMessage = "\(creature.name) fainted!"
+                await returnCreatureToBall()
             } else {
                 statusMessage = "\(creature.name) — HP: \(creatureHP)/\(creatureMaxHP)"
+            }
+        }
+    }
+
+    // MARK: - Return to Ball Animation
+
+    private func returnCreatureToBall() async {
+        guard let arView,
+              let creature = currentCreature,
+              let creatureEntity = creatureEntity,
+              let anchor = creatureAnchor else { return }
+
+        // Stop idle animation
+        idleTimer?.invalidate()
+        idleTimer = nil
+
+        // Load a pokeball for the capture animation
+        let ballType = SpawnBallService.ballType(for: creature)
+        guard let ball = await SpawnBallService.loadBall(type: ballType) else {
+            resetScene()
+            return
+        }
+
+        // Position ball above creature
+        ball.position = creatureEntity.position + SIMD3<Float>(0, 0.15, 0)
+        ball.scale = SIMD3<Float>(repeating: ballType.landedScale * 0.5)
+        anchor.addChild(ball)
+
+        statusMessage = "\(creature.name) is returning..."
+
+        // Ball drops down toward creature
+        var ballDrop = ball.transform
+        ballDrop.translation = creatureEntity.position + SIMD3<Float>(0, 0.02, 0)
+        ballDrop.scale = SIMD3<Float>(repeating: ballType.landedScale)
+        ball.move(to: ballDrop, relativeTo: anchor, duration: 0.3, timingFunction: .easeIn)
+        try? await Task.sleep(for: .seconds(0.3))
+
+        // Red beam effect - creature shrinks and gets sucked into ball
+        statusMessage = "Return!"
+
+        // Create red glow around creature - non-metallic for soft glow
+        var glowMaterial = SimpleMaterial()
+        glowMaterial.color = .init(tint: .red.withAlphaComponent(0.6))
+        glowMaterial.metallic = .init(floatLiteral: 0.0)
+        glowMaterial.roughness = .init(floatLiteral: 0.8)
+        let glowSphere = ModelEntity(mesh: .generateSphere(radius: 0.03), materials: [glowMaterial])
+        glowSphere.position = creatureEntity.position
+        anchor.addChild(glowSphere)
+
+        // Expand glow
+        var glowExpand = glowSphere.transform
+        glowExpand.scale = SIMD3<Float>(repeating: 3.0)
+        glowSphere.move(to: glowExpand, relativeTo: anchor, duration: 0.2, timingFunction: .easeOut)
+        try? await Task.sleep(for: .seconds(0.2))
+
+        // Shrink creature rapidly while turning red-ish
+        var creatureShrink = creatureEntity.transform
+        creatureShrink.scale = SIMD3<Float>(repeating: 0.0001)
+        creatureShrink.translation = ball.position
+        creatureEntity.move(to: creatureShrink, relativeTo: anchor, duration: 0.4, timingFunction: .easeIn)
+
+        // Shrink glow toward ball
+        var glowShrink = glowSphere.transform
+        glowShrink.scale = SIMD3<Float>(repeating: 0.01)
+        glowShrink.translation = ball.position
+        glowSphere.move(to: glowShrink, relativeTo: anchor, duration: 0.4, timingFunction: .easeIn)
+
+        try? await Task.sleep(for: .seconds(0.4))
+
+        // Remove creature and glow
+        creatureEntity.removeFromParent()
+        glowSphere.removeFromParent()
+
+        // Ball shakes (captured!)
+        for i in 0..<3 {
+            let angle: Float = (i % 2 == 0) ? 0.2 : -0.2
+            var shake = ball.transform
+            shake.rotation = simd_quatf(angle: angle, axis: SIMD3<Float>(0, 0, 1))
+            ball.move(to: shake, relativeTo: anchor, duration: 0.15, timingFunction: .easeInOut)
+            try? await Task.sleep(for: .seconds(0.15))
+        }
+
+        // Ball settles
+        var settle = ball.transform
+        settle.rotation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+        ball.move(to: settle, relativeTo: anchor, duration: 0.1, timingFunction: .easeOut)
+        try? await Task.sleep(for: .seconds(0.3))
+
+        // Flash indicating successful capture - non-metallic for soft glow
+        var flashMaterial = SimpleMaterial()
+        flashMaterial.color = .init(tint: .white.withAlphaComponent(0.9))
+        flashMaterial.metallic = .init(floatLiteral: 0.0)
+        flashMaterial.roughness = .init(floatLiteral: 0.6)
+        let flash = ModelEntity(mesh: .generateSphere(radius: 0.01), materials: [flashMaterial])
+        flash.position = ball.position
+        anchor.addChild(flash)
+
+        var flashExpand = flash.transform
+        flashExpand.scale = SIMD3<Float>(repeating: 8.0)
+        flash.move(to: flashExpand, relativeTo: anchor, duration: 0.2, timingFunction: .easeOut)
+        try? await Task.sleep(for: .seconds(0.2))
+
+        flash.removeFromParent()
+
+        // Ball shrinks and disappears
+        var ballShrink = ball.transform
+        ballShrink.scale = SIMD3<Float>(repeating: 0.0001)
+        ball.move(to: ballShrink, relativeTo: anchor, duration: 0.3, timingFunction: .easeIn)
+        try? await Task.sleep(for: .seconds(0.3))
+
+        ball.removeFromParent()
+
+        statusMessage = "\(creature.name) returned to ball! Tap to summon again"
+
+        // Reset state
+        self.creatureEntity = nil
+        isCreatureSpawned = false
+        isTrackingWithCard = false
+        isAttacking = false
+        creatureHP = creatureMaxHP
+    }
+
+    // MARK: - Card Drop Mode (Summon from Collection)
+
+    func enterCardDropMode() {
+        guard let arView, !isCreatureSpawned, !isPokeballAnimating else { return }
+
+        isCardDropMode = true
+        waitingForSurface = true
+        isCardOnSurface = false
+        statusMessage = "Tap a surface to place your card..."
+    }
+
+    func dropCardOnSurface(at worldTransform: simd_float4x4) {
+        guard let arView, isCardDropMode, waitingForSurface else { return }
+
+        waitingForSurface = false
+        let creature = availableCreatures[selectedCreatureIndex]
+        statusMessage = "Dropping \(creature.name) card..."
+
+        // Create anchor for the card
+        let anchor = AnchorEntity(world: worldTransform)
+        arView.scene.addAnchor(anchor)
+        droppedCardAnchor = anchor
+
+        Task {
+            // Create a 3D card entity
+            let cardEntity = await createDroppedCard(for: creature)
+            droppedCardEntity = cardEntity
+            print("DEBUG: Created dropped card entity for \(creature.name)")
+
+            // Start card high above the surface, small scale
+            cardEntity.position = SIMD3<Float>(0, 0.5, 0)
+            cardEntity.scale = SIMD3<Float>(repeating: 0.01)  // Start small
+
+            // Initial rotation - card horizontal but tilted back (front facing slightly toward camera)
+            cardEntity.orientation = simd_quatf(angle: .pi * 0.1, axis: SIMD3<Float>(1, 0, 0))
+
+            anchor.addChild(cardEntity)
+            print("DEBUG: Card added to anchor at position \(cardEntity.position)")
+
+            // Animate card growing to full size (1.0 = real world size since mesh is in meters)
+            var growTransform = cardEntity.transform
+            growTransform.scale = SIMD3<Float>(repeating: 1.0)  // Full size (63mm x 88mm)
+            cardEntity.move(to: growTransform, relativeTo: anchor, duration: 0.3, timingFunction: .easeOut)
+            try? await Task.sleep(for: .seconds(0.3))
+            print("DEBUG: Card scaled to full size")
+
+            // Card tumbles and falls to the surface
+            statusMessage = "\(creature.name) card incoming!"
+
+            // Fall with slight tumble rotation
+            let fallDuration: Double = 0.5
+            var fallTransform = cardEntity.transform
+            fallTransform.translation = SIMD3<Float>(0, 0.005, 0)  // Land just above surface
+            fallTransform.rotation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))  // Flat
+            cardEntity.move(to: fallTransform, relativeTo: anchor, duration: fallDuration, timingFunction: .easeIn)
+
+            try? await Task.sleep(for: .seconds(fallDuration))
+            print("DEBUG: Card landed on surface")
+
+            // Card bounces slightly
+            var bounceUp = cardEntity.transform
+            bounceUp.translation.y = 0.02
+            cardEntity.move(to: bounceUp, relativeTo: anchor, duration: 0.08, timingFunction: .easeOut)
+            try? await Task.sleep(for: .seconds(0.08))
+
+            var bounceDown = cardEntity.transform
+            bounceDown.translation.y = 0.003  // Settle on surface
+            cardEntity.move(to: bounceDown, relativeTo: anchor, duration: 0.1, timingFunction: .easeIn)
+            try? await Task.sleep(for: .seconds(0.1))
+
+            // Card is now on the surface
+            isCardOnSurface = true
+
+            // Add a subtle glow/pulse to the card
+            await addCardGlow(to: cardEntity, anchor: anchor, creature: creature)
+
+            statusMessage = "Card ready! Now throw to summon \(creature.name)!"
+
+            // Automatically enter throw mode after a brief pause
+            try? await Task.sleep(for: .seconds(0.5))
+            await MainActor.run {
+                self.enterThrowModeFromCard()
+            }
+        }
+    }
+
+    private func createDroppedCard(for creature: Creature) async -> Entity {
+        print("DEBUG: Creating dropped card for \(creature.name)")
+
+        // Create a flat plane for the card front (more reliable for textures)
+        // Standard trading card: 63mm x 88mm
+        let cardWidth: Float = 0.063
+        let cardDepth: Float = 0.088
+
+        // Create the card as a thin box
+        let cardMesh = MeshResource.generateBox(width: cardWidth, height: 0.001, depth: cardDepth)
+
+        // Try to load the actual card image as a texture
+        var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
+
+        if let cardImage = CardReferenceService.renderCardImage(for: creature) {
+            print("DEBUG: Card image rendered, size: \(cardImage.size)")
+            if let cgImage = cardImage.cgImage {
+                do {
+                    // Use the new iOS 18+ initializer
+                    let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
+                    // Use UnlitMaterial to show texture without lighting effects
+                    var unlitMaterial = UnlitMaterial()
+                    unlitMaterial.color = .init(tint: .white, texture: .init(texture))
+                    frontMaterial = unlitMaterial
+                    print("DEBUG: Card texture loaded successfully with UnlitMaterial")
+                } catch {
+                    print("DEBUG: Failed to generate texture: \(error)")
+                }
+            } else {
+                print("DEBUG: Failed to get CGImage from card image")
+            }
+        } else {
+            print("DEBUG: Failed to render card image")
+        }
+
+        // Back of card - dark color
+        let backMaterial = SimpleMaterial(color: UIColor(red: 0.15, green: 0.1, blue: 0.2, alpha: 1.0), isMetallic: false)
+
+        // Edge material - white
+        let edgeMaterial = SimpleMaterial(color: .white, isMetallic: false)
+
+        // Box materials order: front (+Z), right (+X), back (-Z), left (-X), top (+Y), bottom (-Y)
+        // For a card lying flat on the floor, top (+Y) should show the card artwork
+        let cardEntity = ModelEntity(mesh: cardMesh, materials: [
+            edgeMaterial,   // +Z front edge
+            edgeMaterial,   // +X right edge
+            edgeMaterial,   // -Z back edge
+            edgeMaterial,   // -X left edge
+            frontMaterial,  // +Y top (card artwork)
+            backMaterial    // -Y bottom (card back)
+        ])
+        cardEntity.name = "droppedCard"
+        print("DEBUG: Card entity created with \(cardEntity.model?.materials.count ?? 0) materials")
+
+        return cardEntity
+    }
+
+    private func addCardGlow(to card: Entity, anchor: AnchorEntity, creature: Creature) async {
+        // Add pulsing glow effect around the card
+        let glowMesh = MeshResource.generateBox(width: 0.07, height: 0.002, depth: 0.095, cornerRadius: 0.005)
+        var glowMaterial = SimpleMaterial()
+        glowMaterial.color = .init(tint: creature.element.primaryColor.withAlphaComponent(0.6))
+        glowMaterial.metallic = .init(floatLiteral: 0.0)  // Non-metallic for soft glow
+        glowMaterial.roughness = .init(floatLiteral: 0.7)
+
+        let glowEntity = ModelEntity(mesh: glowMesh, materials: [glowMaterial])
+        glowEntity.position = SIMD3<Float>(0, -0.001, 0)
+        card.addChild(glowEntity)
+
+        // Pulse animation
+        Task {
+            while isCardOnSurface && !isCreatureSpawned {
+                var expandTransform = glowEntity.transform
+                expandTransform.scale = SIMD3<Float>(1.1, 1.0, 1.1)
+                glowEntity.move(to: expandTransform, relativeTo: card, duration: 0.8, timingFunction: .easeInOut)
+                try? await Task.sleep(for: .seconds(0.8))
+
+                var shrinkTransform = glowEntity.transform
+                shrinkTransform.scale = SIMD3<Float>(1.0, 1.0, 1.0)
+                glowEntity.move(to: shrinkTransform, relativeTo: card, duration: 0.8, timingFunction: .easeInOut)
+                try? await Task.sleep(for: .seconds(0.8))
+            }
+        }
+    }
+
+    private func enterThrowModeFromCard() {
+        guard let arView, isCardOnSurface, !isCreatureSpawned else { return }
+
+        // Ensure we have a card anchor, otherwise fall back to normal throw mode
+        guard droppedCardAnchor != nil else {
+            enterThrowMode()
+            return
+        }
+
+        isThrowMode = true
+        isReadyToThrow = false
+        let creature = availableCreatures[selectedCreatureIndex]
+        let ballType = SpawnBallService.ballType(for: creature)
+        let ballName = ballType == .football ? "Football" : "Pokeball"
+        statusMessage = "Throw the \(ballName) at the card!"
+
+        // Create throwable ball
+        Task {
+            let cameraTransform = arView.cameraTransform.matrix
+
+            if let pokeball = await PokeballThrowService.createThrowableBall(for: creature, at: cameraTransform) {
+                throwablePokeball = pokeball
+
+                // Add to a new anchor in front of camera
+                let throwAnchor = AnchorEntity(world: cameraTransform)
+                arView.scene.addAnchor(throwAnchor)
+                creatureAnchor = throwAnchor
+                throwAnchor.addChild(pokeball)
+
+                // Use default throwScale (already set by createThrowableBall)
+
+                isReadyToThrow = true
+                statusMessage = "Swipe to throw the \(ballName) at your card!"
+
+                startThrowModeTracking()
             }
         }
     }
@@ -336,22 +739,22 @@ class ARViewModel {
         statusMessage = "Finding floor surface..."
 
         Task {
+            // Use cameraTransform directly to avoid retaining ARFrames
+            let cameraTransform = arView.cameraTransform.matrix
+
             // First, verify we can find a floor
-            if let cameraTransform = arView.session.currentFrame?.camera.transform {
-                let floorY = PokeballThrowService.findFloorLevel(arView: arView, cameraTransform: cameraTransform)
-                let cameraY = cameraTransform.columns.3.y
-                let floorDistance = cameraY - floorY
+            let floorY = PokeballThrowService.findFloorLevel(arView: arView, cameraTransform: cameraTransform)
+            let cameraY = cameraTransform.columns.3.y
+            let floorDistance = cameraY - floorY
 
-                if floorDistance > 0.3 && floorDistance < 3.0 {
-                    statusMessage = "Swipe forward to throw the \(ballName)!"
-                } else {
-                    statusMessage = "Point at floor, then swipe to throw!"
-                }
-                print("DEBUG: Floor detected at \(floorY), camera at \(cameraY), distance: \(floorDistance)m")
+            if floorDistance > 0.3 && floorDistance < 3.0 {
+                statusMessage = "Swipe forward to throw the \(ballName)!"
+            } else {
+                statusMessage = "Point at floor, then swipe to throw!"
             }
+            print("DEBUG: Floor detected at \(floorY), camera at \(cameraY), distance: \(floorDistance)m")
 
-            if let cameraTransform = arView.session.currentFrame?.camera.transform,
-               let ball = await PokeballThrowService.createThrowableBall(for: creature, at: cameraTransform) {
+            if let ball = await PokeballThrowService.createThrowableBall(for: creature, at: cameraTransform) {
                 // Add ball directly to scene root for world-space positioning during throw
                 let anchor = AnchorEntity(world: .zero)
                 arView.scene.addAnchor(anchor)
@@ -376,9 +779,11 @@ class ARViewModel {
                   self.isThrowMode,
                   self.isReadyToThrow,
                   let pokeball = self.throwablePokeball,
-                  let cameraTransform = self.arView?.session.currentFrame?.camera.transform else {
+                  let arView = self.arView else {
                 return
             }
+            // Use cameraTransform directly instead of currentFrame to avoid retaining ARFrames
+            let cameraTransform = arView.cameraTransform.matrix
             PokeballThrowService.updatePokeballPosition(pokeball: pokeball, cameraTransform: cameraTransform)
         }
     }
@@ -398,15 +803,36 @@ class ARViewModel {
         statusMessage = "Point your camera at a CollectARble card"
     }
 
+    func exitCardDropMode() {
+        isCardDropMode = false
+        isCardOnSurface = false
+        waitingForSurface = false
+
+        // Clean up dropped card entity
+        droppedCardEntity?.removeFromParent()
+        droppedCardEntity = nil
+
+        if let anchor = droppedCardAnchor {
+            arView?.scene.removeAnchor(anchor)
+            droppedCardAnchor = nil
+        }
+
+        // Also exit throw mode if we were in it
+        exitThrowMode()
+        statusMessage = "Point your camera at a CollectARble card"
+    }
+
     func handleThrowGesture(velocity: CGPoint) {
         print("DEBUG: handleThrowGesture called with velocity \(velocity)")
         guard isThrowMode, isReadyToThrow,
               let arView,
-              let ball = throwablePokeball,
-              let cameraTransform = arView.session.currentFrame?.camera.transform else {
+              let ball = throwablePokeball else {
             print("DEBUG: Throw guard failed - isThrowMode:\(isThrowMode) isReadyToThrow:\(isReadyToThrow)")
             return
         }
+
+        // Use cameraTransform directly to avoid retaining ARFrames
+        let cameraTransform = arView.cameraTransform.matrix
 
         // Calculate throw strength
         let throwSpeed = sqrt(velocity.x * velocity.x + velocity.y * velocity.y)
@@ -428,7 +854,16 @@ class ARViewModel {
         let ballName = ballType == .football ? "Football" : "Pokeball"
         statusMessage = "\(ballName) thrown!"
 
-        // Find the floor level with comprehensive detection
+        // If in card drop mode, animate ball to land on the card
+        if isCardDropMode, let cardAnchor = droppedCardAnchor {
+            let cardPosition = cardAnchor.position(relativeTo: nil)
+            print("DEBUG: Card drop mode - targeting card at \(cardPosition)")
+
+            animateThrowToCard(ball: ball, targetPosition: cardPosition, arView: arView)
+            return
+        }
+
+        // Normal throw mode - use physics trajectory
         let floorY = PokeballThrowService.findFloorLevel(arView: arView, cameraTransform: cameraTransform)
         print("DEBUG: Detected floor at y=\(floorY), camera at y=\(cameraTransform.columns.3.y)")
 
@@ -457,6 +892,69 @@ class ARViewModel {
         }
     }
 
+    /// Animate the ball to land on the dropped card's position
+    private func animateThrowToCard(ball: Entity, targetPosition: SIMD3<Float>, arView: ARView) {
+        let startPos = ball.position(relativeTo: nil)
+        let creature = availableCreatures[selectedCreatureIndex]
+        let ballType = SpawnBallService.ballType(for: creature)
+        let ballName = ballType == .football ? "Football" : "Pokeball"
+
+        print("DEBUG: Animating \(ballName) from \(startPos) to card at \(targetPosition)")
+
+        // Calculate arc height based on distance
+        let distance = simd_distance(startPos, targetPosition)
+        let arcHeight = max(0.2, distance * 0.4)  // Arc proportional to distance
+
+        // Animation duration based on distance
+        let duration: Double = Double(min(max(distance * 0.8, 0.4), 1.2))
+
+        Task {
+            // Phase 1: Arc up and forward
+            let midPoint = SIMD3<Float>(
+                (startPos.x + targetPosition.x) / 2,
+                max(startPos.y, targetPosition.y) + arcHeight,
+                (startPos.z + targetPosition.z) / 2
+            )
+
+            var arcTransform = ball.transform
+            arcTransform.translation = midPoint
+            // Spin the ball
+            arcTransform.rotation = simd_quatf(angle: .pi, axis: SIMD3<Float>(1, 0.3, 0))
+            ball.move(to: arcTransform, relativeTo: nil, duration: duration * 0.5, timingFunction: .easeOut)
+
+            try? await Task.sleep(for: .seconds(duration * 0.5))
+
+            // Phase 2: Descend to card
+            var landTransform = ball.transform
+            landTransform.translation = SIMD3<Float>(targetPosition.x, targetPosition.y + 0.02, targetPosition.z)
+            landTransform.rotation = simd_quatf(angle: .pi * 2, axis: SIMD3<Float>(1, 0.3, 0))
+            ball.move(to: landTransform, relativeTo: nil, duration: duration * 0.5, timingFunction: .easeIn)
+
+            try? await Task.sleep(for: .seconds(duration * 0.5))
+
+            statusMessage = "\(ballName) landed on card!"
+            print("DEBUG: Ball landed on card at \(targetPosition)")
+
+            // Small bounce
+            var bounceUp = ball.transform
+            bounceUp.translation.y += 0.03
+            ball.move(to: bounceUp, relativeTo: nil, duration: 0.1, timingFunction: .easeOut)
+            try? await Task.sleep(for: .seconds(0.1))
+
+            var bounceDown = ball.transform
+            bounceDown.translation.y = targetPosition.y + 0.015
+            ball.move(to: bounceDown, relativeTo: nil, duration: 0.08, timingFunction: .easeIn)
+            try? await Task.sleep(for: .seconds(0.1))
+
+            // Final landing position is on top of the card
+            let landPosition = SIMD3<Float>(targetPosition.x, targetPosition.y + 0.01, targetPosition.z)
+
+            await MainActor.run {
+                self.handlePokeballLanded(at: landPosition)
+            }
+        }
+    }
+
     private func handlePokeballLanded(at position: SIMD3<Float>) {
         guard let arView else { return }
 
@@ -477,6 +975,30 @@ class ARViewModel {
         throwablePokeball?.removeFromParent()
         throwablePokeball = nil
 
+        // Calculate distance from camera to landing position for scale adjustment
+        let cameraTransform = arView.cameraTransform
+        let cameraPos = SIMD3<Float>(
+            cameraTransform.matrix.columns.3.x,
+            cameraTransform.matrix.columns.3.y,
+            cameraTransform.matrix.columns.3.z
+        )
+        let distance = simd_distance(cameraPos, position)
+        print("DEBUG: Creature spawn distance from camera: \(distance)m")
+
+        // Calculate adaptive scale based on distance
+        // At 0.5m: scale = 0.5x, at 1.5m: scale = 1.0x, at 3m+: scale = 1.5x
+        let distanceScale: Float
+        if distance < 0.5 {
+            distanceScale = 0.4  // Very close - make it small
+        } else if distance < 1.0 {
+            distanceScale = 0.4 + (distance - 0.5) * 0.8  // 0.4 to 0.8
+        } else if distance < 2.0 {
+            distanceScale = 0.8 + (distance - 1.0) * 0.2  // 0.8 to 1.0
+        } else {
+            distanceScale = min(1.2, 1.0 + (distance - 2.0) * 0.1)  // 1.0 to 1.2 max
+        }
+        print("DEBUG: Using distance scale multiplier: \(distanceScale)")
+
         // Remove old anchor
         if let oldAnchor = creatureAnchor {
             arView.scene.removeAnchor(oldAnchor)
@@ -496,6 +1018,7 @@ class ARViewModel {
         creatureAnchor = anchor
 
         currentCreature = creature
+        currentCreatureScale = creature.modelScale * distanceScale
 
         // Set HP based on creature element
         switch creature.element {
@@ -504,6 +1027,8 @@ class ARViewModel {
         case .nature: creatureMaxHP = 90; creatureHP = 90
         case .sports: creatureMaxHP = 110; creatureHP = 110
         }
+
+        let scaleMultiplier = distanceScale  // Capture for async context
 
         Task {
             if let ball = await SpawnBallService.loadBall(for: creature) {
@@ -516,6 +1041,7 @@ class ARViewModel {
                     ball: ball,
                     anchor: anchor,
                     creature: creature,
+                    scaleMultiplier: scaleMultiplier,
                     onBallLanded: {
                         self.statusMessage = "\(ballName) is opening..."
                     },
@@ -526,6 +1052,18 @@ class ARViewModel {
                         self.throwablePokeball = nil
                         self.statusMessage = "\(creature.name) appeared! HP: \(self.creatureHP)/\(self.creatureMaxHP)"
                         self.startIdleLoop()
+
+                        // Clean up dropped card if we were in card drop mode
+                        if self.isCardDropMode {
+                            self.droppedCardEntity?.removeFromParent()
+                            self.droppedCardEntity = nil
+                            if let cardAnchor = self.droppedCardAnchor {
+                                self.arView?.scene.removeAnchor(cardAnchor)
+                                self.droppedCardAnchor = nil
+                            }
+                            self.isCardDropMode = false
+                            self.isCardOnSurface = false
+                        }
 
                         // Show welcome speech bubble
                         self.showWelcomeSpeech(for: creature)
@@ -593,6 +1131,7 @@ class ARViewModel {
         showDamageNumber = false
         showAttackFlash = false
         isTrackingCard = false
+        isTrackingWithCard = false
         trackedImageAnchorID = nil
         isThrowMode = false
         isReadyToThrow = false
@@ -600,6 +1139,13 @@ class ARViewModel {
         showChat = false
         showSpeechBubble = false
         lastCharacterMessage = ""
+
+        // Card drop mode state
+        isCardDropMode = false
+        isCardOnSurface = false
+        waitingForSurface = false
+        droppedCardEntity = nil
+        droppedCardAnchor = nil
 
         statusMessage = "Point your camera at a CollectARble card"
         configureSession()

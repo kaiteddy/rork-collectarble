@@ -268,7 +268,6 @@ struct CardReferenceService {
                 .foregroundColor: UIColor.white
             ]
             let number = "10"
-            let numberSize = number.size(withAttributes: numberAttrs)
             number.draw(at: CGPoint(x: centerX + 40, y: centerY + 10), withAttributes: numberAttrs)
 
             // Argentina flag stripes

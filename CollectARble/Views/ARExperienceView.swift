@@ -31,10 +31,10 @@ struct ARExperienceView: View {
                 }
             }
 
-            // Auto-enter throw mode if requested (from card selection)
+            // Auto-enter card drop mode if requested (from card selection)
             if startInThrowMode {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    viewModel.enterThrowMode()
+                    viewModel.enterCardDropMode()
                 }
             }
         }
@@ -194,7 +194,7 @@ struct ARExperienceView: View {
                 .background(.ultraThinMaterial, in: Capsule())
                 .animation(.snappy, value: viewModel.statusMessage)
 
-            if !viewModel.isCreatureSpawned && !viewModel.isPokeballAnimating {
+            if !viewModel.isCreatureSpawned && !viewModel.isPokeballAnimating && !viewModel.isCardDropMode {
                 creatureSelector
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -204,12 +204,22 @@ struct ARExperienceView: View {
                     .transition(.scale.combined(with: .opacity))
             }
 
-            if !viewModel.isCreatureSpawned && !viewModel.isCardDetected && !viewModel.isPokeballAnimating && !viewModel.isThrowMode {
+            if !viewModel.isCreatureSpawned && !viewModel.isCardDetected && !viewModel.isPokeballAnimating && !viewModel.isThrowMode && !viewModel.isCardDropMode {
                 scanHint
                     .transition(.move(edge: .bottom).combined(with: .opacity))
 
                 // Throw button
                 throwButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            if viewModel.isCardDropMode && viewModel.waitingForSurface {
+                cardDropHint
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            if viewModel.isCardDropMode && viewModel.isCardOnSurface && !viewModel.isThrowMode {
+                cardOnSurfaceHint
                     .transition(.scale.combined(with: .opacity))
             }
 
@@ -253,6 +263,9 @@ struct ARExperienceView: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: viewModel.isCreatureSpawned)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isCardDetected)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isPokeballAnimating)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isCardDropMode)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isCardOnSurface)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.waitingForSurface)
     }
 
     private var interactionHint: some View {
@@ -518,6 +531,72 @@ struct ARExperienceView: View {
         .background(.ultraThinMaterial, in: .rect(cornerRadius: 16))
         .padding(.horizontal, 20)
     }
+
+    private var cardDropHint: some View {
+        let creature = viewModel.availableCreatures[viewModel.selectedCreatureIndex]
+
+        return VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "creditcard.fill")
+                    .font(.title3)
+                    .foregroundStyle(creature.element.displayColor)
+                    .symbolEffect(.bounce, isActive: true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Summoning \(creature.name)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text("Tap a flat surface to place the card")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.exitCardDropMode()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 16))
+        .padding(.horizontal, 20)
+    }
+
+    private var cardOnSurfaceHint: some View {
+        let creature = viewModel.availableCreatures[viewModel.selectedCreatureIndex]
+
+        return VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.title3)
+                    .foregroundStyle(creature.element.displayColor)
+                    .symbolEffect(.variableColor, isActive: true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(creature.name) Card Ready!")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text("Card placed. Preparing to summon...")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 16))
+        .padding(.horizontal, 20)
+    }
 }
 
 struct ARViewContainer: UIViewRepresentable {
@@ -590,6 +669,28 @@ struct ARViewContainer: UIViewRepresentable {
                 return
             }
 
+            // Handle card drop mode - waiting for surface to place card
+            if viewModel.isCardDropMode && viewModel.waitingForSurface {
+                print("DEBUG: Card drop mode - looking for surface...")
+                let results = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal)
+                if let result = results.first {
+                    print("DEBUG: Dropping card at surface")
+                    viewModel.dropCardOnSurface(at: result.worldTransform)
+                    return
+                }
+
+                let fallback = arView.raycast(from: location, allowing: .existingPlaneGeometry, alignment: .horizontal)
+                if let result = fallback.first {
+                    print("DEBUG: Dropping card at existing plane")
+                    viewModel.dropCardOnSurface(at: result.worldTransform)
+                    return
+                }
+
+                print("DEBUG: No surface found for card drop")
+                return
+            }
+
+            // Normal spawn mode
             print("DEBUG: Attempting raycast...")
             let results = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal)
             print("DEBUG: Raycast results (estimated): \(results.count)")
@@ -668,9 +769,10 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
-            Task { @MainActor in
-                viewModel.processFrame(frame)
-            }
+            // Note: processFrame is currently a no-op, but if we need frame data in the future,
+            // extract it here before creating the Task to avoid retaining ARFrame references
+            // let timestamp = frame.timestamp
+            // Task { @MainActor in viewModel.processFrameData(timestamp: timestamp) }
         }
 
         nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {

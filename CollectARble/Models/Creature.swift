@@ -53,7 +53,7 @@ nonisolated struct Creature: Identifiable, Sendable {
             attackName: "Flamethrower",
             description: "A fearsome fire-breathing dragon that soars through the skies.",
             bundledModelName: "Charizard_SV",
-            animationModelName: "Charizard_Flying_Animation",
+            animationModelName: nil,
             modelScale: 0.003
         ),
         Creature(

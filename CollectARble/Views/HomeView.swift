@@ -401,6 +401,11 @@ struct HomeCardDetailSheet: View {
                             .frame(height: 320)
                             .clipShape(.rect(cornerRadius: 16))
                             .shadow(color: .orange.opacity(0.5), radius: 20, y: 10)
+                    } else if card.creatureId == "messi" {
+                        MessiCardView(rotation: $rotation)
+                            .frame(height: 320)
+                            .clipShape(.rect(cornerRadius: 16))
+                            .shadow(color: .pink.opacity(0.5), radius: 20, y: 10)
                     } else {
                         SceneKitCardView(card: card, rotation: $rotation)
                             .frame(height: 320)
@@ -487,6 +492,11 @@ struct CollectorCardPreview: View {
                         .frame(width: 140, height: 200)
                         .clipShape(.rect(cornerRadius: 12))
                         .shadow(color: .orange.opacity(0.5), radius: 10, y: 5)
+                } else if card.creatureId == "messi" {
+                    MessiCardView(rotation: $rotation)
+                        .frame(width: 140, height: 200)
+                        .clipShape(.rect(cornerRadius: 12))
+                        .shadow(color: .pink.opacity(0.5), radius: 10, y: 5)
                 } else {
                     SceneKitCardView(card: card, rotation: $rotation)
                         .frame(width: 140, height: 200)

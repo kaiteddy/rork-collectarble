@@ -13,10 +13,12 @@ struct ParticleEffectBuilder {
             let angle = Float(i) / Float(innerCount) * .pi * 2
             let radius: Float = 0.003 + Float.random(in: 0...0.003)
 
-            let material = SimpleMaterial(
-                color: i % 2 == 0 ? color : secondaryColor,
-                roughness: 0.0, isMetallic: true
-            )
+            // Non-metallic for soft glow effect
+            var material = SimpleMaterial()
+            let particleColor = i % 2 == 0 ? color : secondaryColor
+            material.color = .init(tint: particleColor.withAlphaComponent(0.9))
+            material.metallic = .init(floatLiteral: 0.0)
+            material.roughness = .init(floatLiteral: 0.5)
 
             let particle = ModelEntity(mesh: .generateSphere(radius: radius), materials: [material])
             particle.position = position + SIMD3<Float>(0, 0.06, 0)
@@ -37,10 +39,12 @@ struct ParticleEffectBuilder {
             let angle = Float(i) / Float(outerCount) * .pi * 2 + 0.1
             let radius: Float = 0.002 + Float.random(in: 0...0.005)
 
-            let material = SimpleMaterial(
-                color: i % 3 == 0 ? .white : color,
-                roughness: 0.0, isMetallic: true
-            )
+            // Non-metallic for soft glow effect
+            var material = SimpleMaterial()
+            let particleColor: UIColor = i % 3 == 0 ? .white : color
+            material.color = .init(tint: particleColor.withAlphaComponent(0.9))
+            material.metallic = .init(floatLiteral: 0.0)
+            material.roughness = .init(floatLiteral: 0.5)
 
             let particle = ModelEntity(mesh: .generateSphere(radius: radius), materials: [material])
             particle.position = position + SIMD3<Float>(0, 0.06, 0)
@@ -56,12 +60,16 @@ struct ParticleEffectBuilder {
         }
 
         // Central energy orb that expands and fades
-        let orbMaterial = SimpleMaterial(color: secondaryColor, roughness: 0.0, isMetallic: true)
+        var orbMaterial = SimpleMaterial()
+        orbMaterial.color = .init(tint: secondaryColor.withAlphaComponent(0.7))
+        orbMaterial.metallic = .init(floatLiteral: 0.0)
+        orbMaterial.roughness = .init(floatLiteral: 0.8)
+
         let orb = ModelEntity(mesh: .generateSphere(radius: 0.005), materials: [orbMaterial])
         orb.position = position + SIMD3<Float>(0, 0.06, 0)
         var orbTarget = orb.transform
-        orbTarget.scale = SIMD3<Float>(repeating: 8.0)
-        orb.move(to: orbTarget, relativeTo: nil, duration: 0.6, timingFunction: .easeOut)
+        orbTarget.scale = SIMD3<Float>(repeating: 6.0)  // Slightly smaller
+        orb.move(to: orbTarget, relativeTo: nil, duration: 0.5, timingFunction: .easeOut)
         particles.append(orb)
 
         return particles

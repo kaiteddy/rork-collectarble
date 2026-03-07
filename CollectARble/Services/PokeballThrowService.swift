@@ -52,16 +52,15 @@ struct PokeballThrowService {
         }
 
         // Strategy 2: Check AR anchors for horizontal planes
-        if let frame = arView.session.currentFrame {
-            for anchor in frame.anchors {
-                if let planeAnchor = anchor as? ARPlaneAnchor,
-                   planeAnchor.alignment == .horizontal {
-                    let planeY = planeAnchor.transform.columns.3.y
-                    // Accept horizontal planes below camera
-                    if planeY < cameraY - 0.3 {
-                        detectedFloors.append(planeY)
-                        print("DEBUG: Found plane anchor at y=\(planeY)")
-                    }
+        // Access anchors inline to avoid retaining ARFrame
+        for anchor in arView.session.currentFrame?.anchors ?? [] {
+            if let planeAnchor = anchor as? ARPlaneAnchor,
+               planeAnchor.alignment == .horizontal {
+                let planeY = planeAnchor.transform.columns.3.y
+                // Accept horizontal planes below camera
+                if planeY < cameraY - 0.3 {
+                    detectedFloors.append(planeY)
+                    print("DEBUG: Found plane anchor at y=\(planeY)")
                 }
             }
         }
@@ -189,8 +188,7 @@ struct PokeballThrowService {
 
         print("DEBUG: Starting throw - targetY=\(targetY), start=\(trajectory.startPosition)")
 
-        var animationTimer: Timer?
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { timer in
+        Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { timer in
             guard !hasLanded else { return }
 
             let elapsed = Float(Date().timeIntervalSince(startTime))
@@ -216,8 +214,15 @@ struct PokeballThrowService {
                 let landPosition = SIMD3<Float>(position.x, currentFloorY, position.z)
                 print("DEBUG: Ball landed at \(landPosition)")
 
+                // Get camera position for final facing direction
+                let cameraPos = SIMD3<Float>(
+                    arView.cameraTransform.matrix.columns.3.x,
+                    arView.cameraTransform.matrix.columns.3.y,
+                    arView.cameraTransform.matrix.columns.3.z
+                )
+
                 // Perform bounce animation before callback
-                performLandingBounce(ball: ball, landPosition: landPosition, floorY: currentFloorY) {
+                performLandingBounce(ball: ball, landPosition: landPosition, floorY: currentFloorY, cameraPosition: cameraPos) {
                     onLand(landPosition)
                 }
                 return
@@ -247,10 +252,19 @@ struct PokeballThrowService {
         ball: Entity,
         landPosition: SIMD3<Float>,
         floorY: Float,
+        cameraPosition: SIMD3<Float>,
         completion: @escaping () -> Void
     ) {
         // Place ball at land position
         ball.position = landPosition
+
+        // Calculate final facing angle (facing the camera)
+        let directionToCamera = SIMD3<Float>(
+            cameraPosition.x - landPosition.x,
+            0,  // Ignore Y for horizontal facing
+            cameraPosition.z - landPosition.z
+        )
+        let facingAngle = atan2(directionToCamera.x, directionToCamera.z) + .pi
 
         // Series of diminishing bounces
         let bounceHeights: [Float] = [0.04, 0.015, 0.005]
@@ -258,10 +272,10 @@ struct PokeballThrowService {
 
         Task {
             for (index, height) in bounceHeights.enumerated() {
-                // Bounce up
+                // Bounce up with slight random wobble
                 var bounceUp = ball.transform
                 bounceUp.translation = SIMD3<Float>(landPosition.x, floorY + height, landPosition.z)
-                bounceUp.rotation = simd_quatf(angle: Float.random(in: -0.2...0.2), axis: SIMD3<Float>(0, 1, 0))
+                bounceUp.rotation = simd_quatf(angle: facingAngle + Float.random(in: -0.2...0.2), axis: SIMD3<Float>(0, 1, 0))
                 ball.move(to: bounceUp, relativeTo: nil, duration: bounceDurations[index], timingFunction: .easeOut)
 
                 try? await Task.sleep(for: .seconds(bounceDurations[index]))
@@ -274,10 +288,10 @@ struct PokeballThrowService {
                 try? await Task.sleep(for: .seconds(bounceDurations[index] * 0.7))
             }
 
-            // Final settle
+            // Final settle - face the camera
             var finalPos = ball.transform
             finalPos.translation = SIMD3<Float>(landPosition.x, floorY + 0.01, landPosition.z)
-            finalPos.rotation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+            finalPos.rotation = simd_quatf(angle: facingAngle, axis: SIMD3<Float>(0, 1, 0))
             ball.move(to: finalPos, relativeTo: nil, duration: 0.1, timingFunction: .easeOut)
 
             try? await Task.sleep(for: .seconds(0.15))

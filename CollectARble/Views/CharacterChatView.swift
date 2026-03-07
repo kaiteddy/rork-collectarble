@@ -163,7 +163,6 @@ struct CharacterChatView: View {
             }
             .padding(.horizontal)
             .padding(.top, 8)
-            .background(.regularMaterial)
         }
         .background(Color(.systemBackground).opacity(0.95))
         .clipShape(.rect(cornerRadius: 20))

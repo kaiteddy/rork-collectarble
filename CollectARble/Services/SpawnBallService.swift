@@ -20,21 +20,21 @@ struct SpawnBallService {
         var throwScale: Float {
             switch self {
             case .pokeball: return 0.0003
-            case .football: return 0.0008  // Football model might be different size
+            case .football: return 0.0003  // Match pokeball scale
             }
         }
 
         var landedScale: Float {
             switch self {
             case .pokeball: return 0.0002
-            case .football: return 0.0006
+            case .football: return 0.0002  // Match pokeball scale
             }
         }
 
         var spawnScale: Float {
             switch self {
             case .pokeball: return 0.0001
-            case .football: return 0.0004
+            case .football: return 0.0001  // Match pokeball scale
             }
         }
     }
@@ -166,6 +166,7 @@ struct SpawnBallService {
         ball: Entity,
         anchor: Entity,
         creature: Creature,
+        scaleMultiplier: Float = 1.0,
         onBallLanded: @escaping () -> Void,
         onCreatureReady: @escaping (Entity) -> Void
     ) async {
@@ -195,7 +196,7 @@ struct SpawnBallService {
         try? await Task.sleep(for: .seconds(0.1))
 
         // Create flash and spawn creature
-        await spawnCreatureFromBall(ball: ball, anchor: anchor, creature: creature, onCreatureReady: onCreatureReady)
+        await spawnCreatureFromBall(ball: ball, anchor: anchor, creature: creature, scaleMultiplier: scaleMultiplier, onCreatureReady: onCreatureReady)
     }
 
     private static func runPokeballShake(ball: Entity, anchor: Entity) async {
@@ -230,6 +231,7 @@ struct SpawnBallService {
         ball: Entity,
         anchor: Entity,
         creature: Creature,
+        scaleMultiplier: Float = 1.0,
         onCreatureReady: @escaping (Entity) -> Void
     ) async {
         let ballPos = ball.position(relativeTo: anchor)
@@ -243,17 +245,22 @@ struct SpawnBallService {
         vanishTransform.scale = SIMD3<Float>(repeating: 0.00001)
         ball.move(to: vanishTransform, relativeTo: anchor, duration: 0.2, timingFunction: .easeIn)
 
-        // Energy sphere
+        // Energy sphere - use creature's element color with glow-like appearance
+        var energyMaterial = SimpleMaterial()
+        energyMaterial.color = .init(tint: creature.element.primaryColor.withAlphaComponent(0.7))
+        energyMaterial.metallic = .init(floatLiteral: 0.0)  // Non-metallic for soft glow
+        energyMaterial.roughness = .init(floatLiteral: 0.8)  // Rough for diffuse light
+
         let energySphere = ModelEntity(
             mesh: .generateSphere(radius: 0.003),
-            materials: [SimpleMaterial(color: .white, roughness: 0.0, isMetallic: true)]
+            materials: [energyMaterial]
         )
         energySphere.position = ballPos + SIMD3<Float>(0, 0.005, 0)
         anchor.addChild(energySphere)
 
         var sphereExpand = energySphere.transform
-        sphereExpand.scale = SIMD3<Float>(repeating: 6.0)
-        energySphere.move(to: sphereExpand, relativeTo: anchor, duration: 0.35, timingFunction: .easeOut)
+        sphereExpand.scale = SIMD3<Float>(repeating: 4.0)  // Slightly smaller expansion
+        energySphere.move(to: sphereExpand, relativeTo: anchor, duration: 0.25, timingFunction: .easeOut)
 
         // Energy ring
         let ringParticles = createEnergyRing(at: ballPos + SIMD3<Float>(0, 0.01, 0), color: creature.element.primaryColor)
@@ -282,7 +289,8 @@ struct SpawnBallService {
         creatureEntity.position = SIMD3<Float>(0, 0, 0)
         anchor.addChild(creatureEntity)
 
-        let targetScale: Float = creature.modelScale
+        let targetScale: Float = creature.modelScale * scaleMultiplier
+        print("DEBUG: Spawning creature with scale \(targetScale) (base: \(creature.modelScale), multiplier: \(scaleMultiplier))")
         var creatureTarget = creatureEntity.transform
         creatureTarget.scale = SIMD3<Float>(repeating: targetScale)
         creatureTarget.translation = SIMD3<Float>(0, 0, 0)
@@ -319,13 +327,29 @@ struct SpawnBallService {
             return CreatureBuilder.buildCreature(for: creature)
         }
 
-        let names = [modelName, modelName.replacingOccurrences(of: "_", with: "")]
-        for name in names {
-            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
-                do {
-                    return try await Entity(contentsOf: url)
-                } catch {
-                    continue
+        // Build list of available models - randomly select for variety
+        var availableModels: [String] = [modelName]
+        if let animationModel = creature.animationModelName {
+            availableModels.append(animationModel)
+        }
+
+        // Randomly shuffle to provide different experiences
+        let shuffledModels = availableModels.shuffled()
+        print("DEBUG: Available models for \(creature.name): \(availableModels), selected order: \(shuffledModels)")
+
+        // Try each model in shuffled order
+        for selectedModel in shuffledModels {
+            let names = [selectedModel, selectedModel.replacingOccurrences(of: "_", with: "")]
+            for name in names {
+                if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
+                    do {
+                        let entity = try await Entity(contentsOf: url)
+                        print("DEBUG: Loaded model: \(name)")
+                        return entity
+                    } catch {
+                        print("DEBUG: Failed to load \(name): \(error)")
+                        continue
+                    }
                 }
             }
         }
@@ -335,12 +359,20 @@ struct SpawnBallService {
 
     private static func createOpenFlash(at position: SIMD3<Float>, color: UIColor) -> [Entity] {
         var particles: [Entity] = []
-        let white = SimpleMaterial(color: .white, roughness: 0.0, isMetallic: true)
-        let colored = SimpleMaterial(color: color, roughness: 0.0, isMetallic: true)
+        // Use non-metallic materials for a soft glow effect
+        var whiteMat = SimpleMaterial()
+        whiteMat.color = .init(tint: .white.withAlphaComponent(0.9))
+        whiteMat.metallic = .init(floatLiteral: 0.0)
+        whiteMat.roughness = .init(floatLiteral: 0.6)
+
+        var coloredMat = SimpleMaterial()
+        coloredMat.color = .init(tint: color.withAlphaComponent(0.9))
+        coloredMat.metallic = .init(floatLiteral: 0.0)
+        coloredMat.roughness = .init(floatLiteral: 0.6)
 
         for i in 0..<12 {
             let angle = Float(i) / 12.0 * .pi * 2
-            let material = i % 2 == 0 ? white : colored
+            let material = i % 2 == 0 ? whiteMat : coloredMat
             let particle = ModelEntity(
                 mesh: .generateSphere(radius: 0.002),
                 materials: [material]
@@ -359,7 +391,7 @@ struct SpawnBallService {
 
         let glowBall = ModelEntity(
             mesh: .generateSphere(radius: 0.006),
-            materials: [white]
+            materials: [whiteMat]
         )
         glowBall.position = position + SIMD3<Float>(0, 0.01, 0)
 
@@ -374,12 +406,20 @@ struct SpawnBallService {
 
     private static func createEnergyRing(at position: SIMD3<Float>, color: UIColor) -> [Entity] {
         var particles: [Entity] = []
-        let material = SimpleMaterial(color: color, roughness: 0.0, isMetallic: true)
-        let whiteMat = SimpleMaterial(color: .white, roughness: 0.0, isMetallic: true)
+        // Non-metallic materials for soft glow particles
+        var coloredMat = SimpleMaterial()
+        coloredMat.color = .init(tint: color.withAlphaComponent(0.85))
+        coloredMat.metallic = .init(floatLiteral: 0.0)
+        coloredMat.roughness = .init(floatLiteral: 0.5)
+
+        var whiteMat = SimpleMaterial()
+        whiteMat.color = .init(tint: .white.withAlphaComponent(0.85))
+        whiteMat.metallic = .init(floatLiteral: 0.0)
+        whiteMat.roughness = .init(floatLiteral: 0.5)
 
         for i in 0..<20 {
             let angle = Float(i) / 20.0 * .pi * 2
-            let mat = i % 3 == 0 ? whiteMat : material
+            let mat = i % 3 == 0 ? whiteMat : coloredMat
             let size = Float.random(in: 0.001...0.0025)
             let particle = ModelEntity(
                 mesh: .generateSphere(radius: size),
@@ -407,8 +447,16 @@ struct SpawnBallService {
         secondaryColor: UIColor
     ) -> [Entity] {
         var particles: [Entity] = []
-        let primaryMat = SimpleMaterial(color: color, roughness: 0.0, isMetallic: true)
-        let secondaryMat = SimpleMaterial(color: secondaryColor, roughness: 0.0, isMetallic: true)
+        // Non-metallic materials for soft glow particles
+        var primaryMat = SimpleMaterial()
+        primaryMat.color = .init(tint: color.withAlphaComponent(0.85))
+        primaryMat.metallic = .init(floatLiteral: 0.0)
+        primaryMat.roughness = .init(floatLiteral: 0.5)
+
+        var secondaryMat = SimpleMaterial()
+        secondaryMat.color = .init(tint: secondaryColor.withAlphaComponent(0.85))
+        secondaryMat.metallic = .init(floatLiteral: 0.0)
+        secondaryMat.roughness = .init(floatLiteral: 0.5)
 
         for i in 0..<16 {
             let angle = Float(i) / 16.0 * .pi * 2
