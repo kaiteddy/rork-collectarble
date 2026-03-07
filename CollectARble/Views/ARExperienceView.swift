@@ -636,13 +636,16 @@ struct ARViewContainer: UIViewRepresentable {
         ])
 
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tap.delegate = context.coordinator
         arView.addGestureRecognizer(tap)
 
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
         pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
         arView.addGestureRecognizer(pan)
 
         let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        pinch.delegate = context.coordinator
         arView.addGestureRecognizer(pinch)
 
         context.coordinator.arView = arView
@@ -661,13 +664,18 @@ struct ARViewContainer: UIViewRepresentable {
         Coordinator(viewModel: viewModel)
     }
 
-    class Coordinator: NSObject, ARSessionDelegate {
+    class Coordinator: NSObject, ARSessionDelegate, UIGestureRecognizerDelegate {
         let viewModel: ARViewModel
         var arView: ARView?
         private var lastPanLocation: CGPoint = .zero
 
         init(viewModel: ARViewModel) {
             self.viewModel = viewModel
+        }
+
+        // Allow gestures to work simultaneously
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            return true
         }
 
         @objc func handleTap(_ sender: UITapGestureRecognizer) {
@@ -728,6 +736,8 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         @objc func handlePan(_ sender: UIPanGestureRecognizer) {
+            print("DEBUG: handlePan called, state: \(sender.state.rawValue), isThrowMode: \(viewModel.isThrowMode), isCreatureSpawned: \(viewModel.isCreatureSpawned)")
+
             // Handle throw gesture in throw mode
             if viewModel.isThrowMode && viewModel.isReadyToThrow {
                 if sender.state == .ended {
