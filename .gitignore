@@ -34,4 +34,6 @@ Package.resolved
 
 core
 node_modules
-.expo
+.expoCollectARble.xcodeproj/xcshareddata/xcschemes/
+*.log
+*.zip

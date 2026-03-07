@@ -589,13 +589,16 @@ class ARViewModel {
     private func createDroppedCard(for creature: Creature) async -> Entity {
         print("DEBUG: Creating dropped card for \(creature.name)")
 
-        // Create a flat plane for the card front (more reliable for textures)
         // Standard trading card: 63mm x 88mm
         let cardWidth: Float = 0.063
-        let cardDepth: Float = 0.088
+        let cardHeight: Float = 0.088
 
-        // Create the card as a thin box
-        let cardMesh = MeshResource.generateBox(width: cardWidth, height: 0.001, depth: cardDepth)
+        // Create a parent entity to hold the card components
+        let cardEntity = Entity()
+        cardEntity.name = "droppedCard"
+
+        // Create the front face as a plane (better UV mapping for textures)
+        let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
         // Try to load the actual card image as a texture
         var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
@@ -621,24 +624,49 @@ class ARViewModel {
             print("DEBUG: Failed to render card image")
         }
 
-        // Back of card - dark color
-        let backMaterial = SimpleMaterial(color: UIColor(red: 0.15, green: 0.1, blue: 0.2, alpha: 1.0), isMetallic: false)
+        // Front face plane - facing up (+Y direction)
+        let frontPlane = ModelEntity(mesh: frontPlaneMesh, materials: [frontMaterial])
+        frontPlane.position = SIMD3<Float>(0, 0.0005, 0)  // Slightly above center
+        // Plane is generated facing up by default, which is what we want
+        cardEntity.addChild(frontPlane)
 
-        // Edge material - white
+        // Back face plane - facing down
+        let backMaterial = SimpleMaterial(color: UIColor(red: 0.15, green: 0.1, blue: 0.25, alpha: 1.0), isMetallic: false)
+        let backPlane = ModelEntity(mesh: frontPlaneMesh, materials: [backMaterial])
+        backPlane.position = SIMD3<Float>(0, -0.0005, 0)  // Slightly below center
+        // Rotate 180 degrees to face down
+        backPlane.orientation = simd_quatf(angle: .pi, axis: SIMD3<Float>(1, 0, 0))
+        cardEntity.addChild(backPlane)
+
+        // Add thin edges for card thickness
         let edgeMaterial = SimpleMaterial(color: .white, isMetallic: false)
+        let edgeThickness: Float = 0.001
 
-        // Box materials order: front (+Z), right (+X), back (-Z), left (-X), top (+Y), bottom (-Y)
-        // For a card lying flat on the floor, top (+Y) should show the card artwork
-        let cardEntity = ModelEntity(mesh: cardMesh, materials: [
-            edgeMaterial,   // +Z front edge
-            edgeMaterial,   // +X right edge
-            edgeMaterial,   // -Z back edge
-            edgeMaterial,   // -X left edge
-            frontMaterial,  // +Y top (card artwork)
-            backMaterial    // -Y bottom (card back)
-        ])
-        cardEntity.name = "droppedCard"
-        print("DEBUG: Card entity created with \(cardEntity.model?.materials.count ?? 0) materials")
+        // Create edge boxes
+        let longEdgeMesh = MeshResource.generateBox(width: cardWidth, height: edgeThickness, depth: 0.001)
+        let shortEdgeMesh = MeshResource.generateBox(width: 0.001, height: edgeThickness, depth: cardHeight)
+
+        // Front edge
+        let frontEdge = ModelEntity(mesh: longEdgeMesh, materials: [edgeMaterial])
+        frontEdge.position = SIMD3<Float>(0, 0, cardHeight / 2)
+        cardEntity.addChild(frontEdge)
+
+        // Back edge
+        let backEdge = ModelEntity(mesh: longEdgeMesh, materials: [edgeMaterial])
+        backEdge.position = SIMD3<Float>(0, 0, -cardHeight / 2)
+        cardEntity.addChild(backEdge)
+
+        // Left edge
+        let leftEdge = ModelEntity(mesh: shortEdgeMesh, materials: [edgeMaterial])
+        leftEdge.position = SIMD3<Float>(-cardWidth / 2, 0, 0)
+        cardEntity.addChild(leftEdge)
+
+        // Right edge
+        let rightEdge = ModelEntity(mesh: shortEdgeMesh, materials: [edgeMaterial])
+        rightEdge.position = SIMD3<Float>(cardWidth / 2, 0, 0)
+        cardEntity.addChild(rightEdge)
+
+        print("DEBUG: Card entity created with front texture plane")
 
         return cardEntity
     }
