@@ -749,17 +749,22 @@ struct ARViewContainer: UIViewRepresentable {
             }
 
             // Handle rotation when creature is spawned
-            guard viewModel.isCreatureSpawned else { return }
+            guard viewModel.isCreatureSpawned else {
+                print("DEBUG: Pan gesture - creature not spawned yet")
+                return
+            }
 
             switch sender.state {
             case .began:
                 lastPanLocation = sender.location(in: sender.view)
+                print("DEBUG: Pan began at \(lastPanLocation)")
             case .changed:
                 let currentLocation = sender.location(in: sender.view)
                 let delta = CGPoint(
                     x: currentLocation.x - lastPanLocation.x,
                     y: currentLocation.y - lastPanLocation.y
                 )
+                print("DEBUG: Pan changed, delta: \(delta)")
                 viewModel.handlePanGesture(translation: delta)
                 lastPanLocation = currentLocation
             default:

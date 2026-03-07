@@ -293,27 +293,21 @@ class ARViewModel {
     // MARK: - Gestures
 
     func handlePanGesture(translation: CGPoint) {
-        guard let entity = creatureEntity else { return }
+        guard let entity = creatureEntity else {
+            print("DEBUG: Pan gesture - no creature entity")
+            return
+        }
 
-        // Ignore very small movements (deadzone)
-        guard abs(translation.x) > 2 else { return }
+        print("DEBUG: Pan gesture translation: \(translation)")
 
-        // Only use horizontal (X) component for rotation - ignore vertical completely
-        let rotationSpeed: Float = 0.008
+        // Only use horizontal (X) component for rotation
+        let rotationSpeed: Float = 0.01
         let yaw = Float(translation.x) * rotationSpeed
-
-        // Preserve current position and scale before rotation
-        let currentPosition = entity.position
-        let currentScale = entity.scale
 
         // Apply only Y-axis rotation
         let currentRotation = entity.transform.rotation
         let deltaRotation = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
         entity.transform.rotation = deltaRotation * currentRotation
-
-        // Explicitly restore position and scale to prevent any drift
-        entity.position = currentPosition
-        entity.scale = currentScale
     }
 
     func handlePinchGesture(scale: Float) {
