@@ -600,28 +600,34 @@ class ARViewModel {
         // Create the front face as a plane (better UV mapping for textures)
         let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
-        // Try to load the actual card image as a texture
+        // Load the actual card artwork from bundle - same approach as CardCollectionView
         var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
 
-        if let cardImage = CardReferenceService.renderCardImage(for: creature) {
-            print("DEBUG: Card image rendered, size: \(cardImage.size)")
-            if let cgImage = cardImage.cgImage {
-                do {
-                    // Use the new iOS 18+ initializer
-                    let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
-                    // Use UnlitMaterial to show texture without lighting effects
-                    var unlitMaterial = UnlitMaterial()
-                    unlitMaterial.color = .init(tint: .white, texture: .init(texture))
-                    frontMaterial = unlitMaterial
-                    print("DEBUG: Card texture loaded successfully with UnlitMaterial")
-                } catch {
-                    print("DEBUG: Failed to generate texture: \(error)")
-                }
-            } else {
-                print("DEBUG: Failed to get CGImage from card image")
+        // Map creature ID to card image filename (same images used in CardCollectionView)
+        let cardImageName: String
+        switch creature.id {
+        case "messi":
+            cardImageName = "messi_card_front"
+        case "charizard":
+            cardImageName = "charizard_holographic"
+        default:
+            cardImageName = ""
+        }
+
+        // Load image using same method as CardCollectionView.loadBundleImage
+        if let cardImage = loadCardImage(named: cardImageName), let cgImage = cardImage.cgImage {
+            print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImage.size)")
+            do {
+                let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
+                var unlitMaterial = UnlitMaterial()
+                unlitMaterial.color = .init(tint: .white, texture: .init(texture))
+                frontMaterial = unlitMaterial
+                print("DEBUG: Card texture applied successfully")
+            } catch {
+                print("DEBUG: Failed to generate texture: \(error)")
             }
         } else {
-            print("DEBUG: Failed to render card image")
+            print("DEBUG: Failed to load card image: \(cardImageName)")
         }
 
         // Front face plane - facing up (+Y direction)
@@ -1236,5 +1242,33 @@ class ARViewModel {
             target.translation.y = 0.002 + 0.001
             entity.move(to: target, relativeTo: anchor, duration: 1.4, timingFunction: .easeInOut)
         }
+    }
+
+    // MARK: - Card Image Loading
+
+    /// Load card image from bundle - same approach as CardCollectionView.loadBundleImage
+    private func loadCardImage(named name: String) -> UIImage? {
+        guard !name.isEmpty else { return nil }
+
+        // Try multiple extensions (same as CardCollectionView)
+        let extensions = ["png", "jpg", "jpeg"]
+        for ext in extensions {
+            if let path = Bundle.main.path(forResource: name, ofType: ext) {
+                print("DEBUG: Found card image path: \(path)")
+                if let image = UIImage(contentsOfFile: path) {
+                    print("DEBUG: Successfully loaded card image \(name): \(image.size)")
+                    return image
+                }
+            }
+        }
+
+        // Try loading from asset catalog as fallback
+        if let image = UIImage(named: name) {
+            print("DEBUG: Loaded \(name) from asset catalog: \(image.size)")
+            return image
+        }
+
+        print("DEBUG: Could not find card image: \(name)")
+        return nil
     }
 }
