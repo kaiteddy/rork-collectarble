@@ -616,16 +616,23 @@ class ARViewModel {
             cardImageName = ""
         }
 
-        if let cardImage = loadCardImage(named: cardImageName), let cgImage = cardImage.cgImage {
+        if let cardImage = loadCardImage(named: cardImageName) {
             print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImage.size)")
-            do {
-                let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
-                var unlitMaterial = UnlitMaterial()
-                unlitMaterial.color = .init(tint: .white, texture: .init(texture))
-                frontMaterial = unlitMaterial
-                print("DEBUG: Card texture applied successfully")
-            } catch {
-                print("DEBUG: Failed to generate texture: \(error)")
+
+            // Crop image to match card aspect ratio (63:88 = 0.716)
+            let targetAspect = CGFloat(cardWidth) / CGFloat(cardHeight)
+            let croppedImage = cropImageToAspectRatio(cardImage, targetAspect: targetAspect)
+
+            if let cgImage = croppedImage.cgImage {
+                do {
+                    let texture = try await TextureResource(image: cgImage, options: .init(semantic: .color))
+                    var unlitMaterial = UnlitMaterial()
+                    unlitMaterial.color = .init(tint: .white, texture: .init(texture))
+                    frontMaterial = unlitMaterial
+                    print("DEBUG: Card texture applied successfully, cropped to \(croppedImage.size)")
+                } catch {
+                    print("DEBUG: Failed to generate texture: \(error)")
+                }
             }
         }
 
@@ -1260,5 +1267,38 @@ class ARViewModel {
 
         print("DEBUG: Could not find card image: \(name)")
         return nil
+    }
+
+    /// Crop image to target aspect ratio (center crop)
+    private func cropImageToAspectRatio(_ image: UIImage, targetAspect: CGFloat) -> UIImage {
+        let imageSize = image.size
+        let imageAspect = imageSize.width / imageSize.height
+
+        // If aspect ratios match (within tolerance), return original
+        if abs(imageAspect - targetAspect) < 0.01 {
+            return image
+        }
+
+        var cropRect: CGRect
+
+        if imageAspect > targetAspect {
+            // Image is wider than target - crop width
+            let newWidth = imageSize.height * targetAspect
+            let xOffset = (imageSize.width - newWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: imageSize.height)
+        } else {
+            // Image is taller than target - crop height
+            let newHeight = imageSize.width / targetAspect
+            let yOffset = (imageSize.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: imageSize.width, height: newHeight)
+        }
+
+        // Perform the crop
+        guard let cgImage = image.cgImage,
+              let croppedCGImage = cgImage.cropping(to: cropRect) else {
+            return image
+        }
+
+        return UIImage(cgImage: croppedCGImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
