@@ -589,32 +589,69 @@ class ARViewModel {
     private func createDroppedCard(for creature: Creature) async -> Entity {
         print("DEBUG: Creating dropped card for \(creature.name)")
 
+        // For Charizard, use the 3D USDZ card model (same as My Collection)
+        if creature.id == "charizard" {
+            if let cardEntity = await load3DCardModel(for: creature) {
+                return cardEntity
+            }
+        }
+
+        // For other creatures (Messi), use 2D card with texture
+        return await create2DCard(for: creature)
+    }
+
+    /// Load 3D USDZ card model (for Charizard)
+    private func load3DCardModel(for creature: Creature) async -> Entity? {
+        // Try to load the USDZ card model
+        let possibleNames = [
+            "Pokemon_TCG_Charizard_1st_Edition",
+            "PokemonTCGCharizard1stEdition",
+            "pokemon_tcg_charizard_1st_edition"
+        ]
+
+        for name in possibleNames {
+            if let url = Bundle.main.url(forResource: name, withExtension: "usdz") {
+                do {
+                    let cardEntity = try await Entity(contentsOf: url)
+                    cardEntity.name = "droppedCard"
+
+                    // Scale the card to real-world size (trading card ~63mm x 88mm)
+                    // The USDZ model may have different scale, adjust as needed
+                    cardEntity.scale = SIMD3<Float>(repeating: 0.001)
+
+                    // Rotate to lay flat (front facing up)
+                    cardEntity.orientation = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
+
+                    print("DEBUG: Loaded 3D card model: \(name)")
+                    return cardEntity
+                } catch {
+                    print("DEBUG: Failed to load \(name): \(error)")
+                    continue
+                }
+            }
+        }
+
+        print("DEBUG: No 3D card model found for \(creature.id)")
+        return nil
+    }
+
+    /// Create 2D card with texture (for Messi and fallback)
+    private func create2DCard(for creature: Creature) async -> Entity {
         // Standard trading card: 63mm x 88mm
         let cardWidth: Float = 0.063
         let cardHeight: Float = 0.088
 
-        // Create a parent entity to hold the card components
         let cardEntity = Entity()
         cardEntity.name = "droppedCard"
 
-        // Create the front face as a plane (better UV mapping for textures)
+        // Create the front face as a plane
         let frontPlaneMesh = MeshResource.generatePlane(width: cardWidth, depth: cardHeight)
 
-        // Load the actual card artwork from bundle - same approach as CardCollectionView
+        // Load the card image
         var frontMaterial: RealityKit.Material = SimpleMaterial(color: creature.element.primaryColor, isMetallic: false)
 
-        // Map creature ID to card image filename (same images used in CardCollectionView)
-        let cardImageName: String
-        switch creature.id {
-        case "messi":
-            cardImageName = "messi_card_front"
-        case "charizard":
-            cardImageName = "charizard_holographic"
-        default:
-            cardImageName = ""
-        }
+        let cardImageName = creature.id == "messi" ? "messi_card_front" : ""
 
-        // Load image using same method as CardCollectionView.loadBundleImage
         if let cardImage = loadCardImage(named: cardImageName), let cgImage = cardImage.cgImage {
             print("DEBUG: Card image loaded: \(cardImageName), size: \(cardImage.size)")
             do {
@@ -626,54 +663,43 @@ class ARViewModel {
             } catch {
                 print("DEBUG: Failed to generate texture: \(error)")
             }
-        } else {
-            print("DEBUG: Failed to load card image: \(cardImageName)")
         }
 
-        // Front face plane - facing up (+Y direction)
+        // Front face plane
         let frontPlane = ModelEntity(mesh: frontPlaneMesh, materials: [frontMaterial])
-        frontPlane.position = SIMD3<Float>(0, 0.0005, 0)  // Slightly above center
-        // Plane is generated facing up by default, which is what we want
+        frontPlane.position = SIMD3<Float>(0, 0.0005, 0)
         cardEntity.addChild(frontPlane)
 
-        // Back face plane - facing down
+        // Back face plane
         let backMaterial = SimpleMaterial(color: UIColor(red: 0.15, green: 0.1, blue: 0.25, alpha: 1.0), isMetallic: false)
         let backPlane = ModelEntity(mesh: frontPlaneMesh, materials: [backMaterial])
-        backPlane.position = SIMD3<Float>(0, -0.0005, 0)  // Slightly below center
-        // Rotate 180 degrees to face down
+        backPlane.position = SIMD3<Float>(0, -0.0005, 0)
         backPlane.orientation = simd_quatf(angle: .pi, axis: SIMD3<Float>(1, 0, 0))
         cardEntity.addChild(backPlane)
 
-        // Add thin edges for card thickness
+        // Add thin edges
         let edgeMaterial = SimpleMaterial(color: .white, isMetallic: false)
         let edgeThickness: Float = 0.001
-
-        // Create edge boxes
         let longEdgeMesh = MeshResource.generateBox(width: cardWidth, height: edgeThickness, depth: 0.001)
         let shortEdgeMesh = MeshResource.generateBox(width: 0.001, height: edgeThickness, depth: cardHeight)
 
-        // Front edge
         let frontEdge = ModelEntity(mesh: longEdgeMesh, materials: [edgeMaterial])
         frontEdge.position = SIMD3<Float>(0, 0, cardHeight / 2)
         cardEntity.addChild(frontEdge)
 
-        // Back edge
         let backEdge = ModelEntity(mesh: longEdgeMesh, materials: [edgeMaterial])
         backEdge.position = SIMD3<Float>(0, 0, -cardHeight / 2)
         cardEntity.addChild(backEdge)
 
-        // Left edge
         let leftEdge = ModelEntity(mesh: shortEdgeMesh, materials: [edgeMaterial])
         leftEdge.position = SIMD3<Float>(-cardWidth / 2, 0, 0)
         cardEntity.addChild(leftEdge)
 
-        // Right edge
         let rightEdge = ModelEntity(mesh: shortEdgeMesh, materials: [edgeMaterial])
         rightEdge.position = SIMD3<Float>(cardWidth / 2, 0, 0)
         cardEntity.addChild(rightEdge)
 
-        print("DEBUG: Card entity created with front texture plane")
-
+        print("DEBUG: 2D card entity created")
         return cardEntity
     }
 

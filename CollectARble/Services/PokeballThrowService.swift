@@ -304,7 +304,7 @@ struct PokeballThrowService {
 
     // MARK: - Ball Creation
 
-    /// Create a throwable ball at the camera position
+    /// Create a throwable ball at the camera position - centered on screen
     static func createThrowableBall(for creature: Creature, at cameraTransform: simd_float4x4) async -> Entity? {
         let ballType = SpawnBallService.ballType(for: creature)
 
@@ -312,7 +312,7 @@ struct PokeballThrowService {
             return nil
         }
 
-        // Position in front of and slightly below camera
+        // Position centered in front of camera (use full forward direction for screen center)
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
             cameraTransform.columns.3.y,
@@ -324,19 +324,21 @@ struct PokeballThrowService {
             cameraTransform.columns.2.z
         ))
 
-        ball.position = cameraPosition + cameraForward * 0.25 + SIMD3<Float>(0, -0.02, 0)
+        // Place ball directly in front of camera center, no horizontal offset
+        // Distance of 0.3m in front, centered on screen
+        ball.position = cameraPosition + cameraForward * 0.3
         ball.scale = SIMD3<Float>(repeating: ballType.throwScale)
 
-        // Orient ball to face the user (rotate 180 degrees around Y axis from camera forward)
+        // Orient ball to face the user
         let horizontalForward = simd_normalize(SIMD3<Float>(cameraForward.x, 0, cameraForward.z))
         let angle = atan2(horizontalForward.x, horizontalForward.z)
         ball.orientation = simd_quatf(angle: angle + .pi, axis: SIMD3<Float>(0, 1, 0))
 
-        print("DEBUG: Created \(ballType) at \(ball.position)")
+        print("DEBUG: Created \(ballType) centered at \(ball.position)")
         return ball
     }
 
-    /// Update ball position to follow camera
+    /// Update ball position to follow camera - kept centered on screen
     static func updateBallPosition(ball: Entity, cameraTransform: simd_float4x4) {
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
@@ -349,7 +351,8 @@ struct PokeballThrowService {
             cameraTransform.columns.2.z
         ))
 
-        ball.position = cameraPosition + cameraForward * 0.25 + SIMD3<Float>(0, -0.02, 0)
+        // Keep ball centered in front of camera
+        ball.position = cameraPosition + cameraForward * 0.3
 
         // Keep ball oriented facing the user
         let horizontalForward = simd_normalize(SIMD3<Float>(cameraForward.x, 0, cameraForward.z))
@@ -374,7 +377,7 @@ struct PokeballThrowService {
             cameraTransform.columns.2.z
         ))
 
-        pokeball.position = cameraPosition + cameraForward * 0.25 + SIMD3<Float>(0, -0.02, 0)
+        pokeball.position = cameraPosition + cameraForward * 0.3
         pokeball.scale = SIMD3<Float>(repeating: 0.0003)
 
         // Orient pokeball to face the user

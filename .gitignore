@@ -37,3 +37,4 @@ node_modules
 .expoCollectARble.xcodeproj/xcshareddata/xcschemes/
 *.log
 *.zip
+CollectARble.xcodeproj/xcshareddata/
