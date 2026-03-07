@@ -338,7 +338,7 @@ struct PokeballThrowService {
         return ball
     }
 
-    /// Update ball position to follow camera - kept centered on screen
+    /// Update ball position to follow camera - smoothed with lerp
     static func updateBallPosition(ball: Entity, cameraTransform: simd_float4x4) {
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
@@ -351,13 +351,21 @@ struct PokeballThrowService {
             cameraTransform.columns.2.z
         ))
 
-        // Keep ball centered in front of camera
-        ball.position = cameraPosition + cameraForward * 0.3
+        // Target position centered in front of camera
+        let targetPosition = cameraPosition + cameraForward * 0.3
 
-        // Keep ball oriented facing the user
+        // Smooth position with lerp (0.15 = smooth follow, higher = snappier)
+        let smoothFactor: Float = 0.15
+        let currentPos = ball.position
+        ball.position = simd_mix(currentPos, targetPosition, SIMD3<Float>(repeating: smoothFactor))
+
+        // Target orientation facing the user
         let horizontalForward = simd_normalize(SIMD3<Float>(cameraForward.x, 0, cameraForward.z))
         let angle = atan2(horizontalForward.x, horizontalForward.z)
-        ball.orientation = simd_quatf(angle: angle + .pi, axis: SIMD3<Float>(0, 1, 0))
+        let targetOrientation = simd_quatf(angle: angle + .pi, axis: SIMD3<Float>(0, 1, 0))
+
+        // Smooth rotation with slerp
+        ball.orientation = simd_slerp(ball.orientation, targetOrientation, smoothFactor)
     }
 
     // Legacy compatibility
