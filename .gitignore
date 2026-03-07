@@ -38,3 +38,7 @@ node_modules
 *.log
 *.zip
 CollectARble.xcodeproj/xcshareddata/
+
+# Secrets (API keys)
+Secrets.plist
+CollectARble/Secrets.plist
